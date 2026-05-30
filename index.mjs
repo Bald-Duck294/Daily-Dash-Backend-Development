@@ -23,6 +23,7 @@ import fcmRoutes from "./routes/fcmRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import serviceReqRouter from "./routes/serviceRequestRoute.js";
 import shiftAssign_router from "./routes/shiftAssignRoutes.js";
+import dropdownlist_router from "./routes/dropdownlist.route.js"
 dotenv.config();
 
 const app = express();
@@ -101,6 +102,7 @@ app.use("/api", registered_users_router);
 app.use("/api/reports", reportRouter);
 app.use("/api/facility-companies", facility_company_router);
 app.use("/api/service-req", serviceReqRouter);
+app.use("/api/dropdown-list", dropdownlist_router );
 // app.use("/api", verifyToken);
 
 app.use("/api/locations", getLocationRoutes);
@@ -146,5 +148,5 @@ app.listen(PORT, () => {
   console.log(
     `----------/////Server running on port ${PORT}\\\\\\\------------`,
   );
-  console.log(process.env.DATABASE_URL);
+  // console.log(process.env.DATABASE_URL);
 });

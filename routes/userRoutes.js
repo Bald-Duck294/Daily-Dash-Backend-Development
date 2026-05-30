@@ -4,6 +4,8 @@ import {
   createUser,
   deleteUser,
   getUser,
+  getclientUser,
+  getUsersCount,
   updateUser,
   getUserById,
   changeOwnPassword,
@@ -13,6 +15,8 @@ import { verifyToken } from "../middlewares/authMiddleware.js";
 const userRouter = express.Router();
 
 userRouter.get("/", verifyToken, getUser);
+userRouter.get("/client", verifyToken, getclientUser);
+userRouter.get("/count", verifyToken, getUsersCount);
 userRouter.get("/:id", getUserById);
 userRouter.post("/", createUser);
 userRouter.post("/:id", updateUser);

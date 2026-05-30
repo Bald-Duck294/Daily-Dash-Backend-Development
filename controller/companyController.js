@@ -9,26 +9,54 @@ import { serializeBigInt } from "../utils/serializer.js";
 // @route   POST /api/companies
 // @access  Public
 
-export const getAllCompanies = async (req, res) => {
-  const { page = 1, limit = 10 } = req.query;
-  try {
-    // const companies = await prisma.companies.findMany({
-    //   orderBy: {
-    //     created_at: "desc",
-    //   },
-    // });
+// export const getAllCompanies = async (req, res) => {
+//   const { page = 1, limit = 10 } = req.query;
+//   try {
+ 
 
-    const { data, meta } = await paginateWithPrisma(prisma.companies, {
+//     const { data, meta } = await paginateWithPrisma(prisma.companies, {
+//       orderBy: {
+//         created_at: "desc",
+//       },
+//       page: parseInt(page),
+//       limit: parseInt(limit),
+//     });
+
+//     res.status(200).json({
+//       data: serializeBigInt(data),
+//       pagination: meta,
+//     });
+//   } catch (error) {
+//     console.error("Error fetching companies:", error);
+//     res.status(500).json({ message: "Failed to fetch companies" });
+//   }
+// };
+
+export const getAllCompanies = async (req, res) => {
+  // 1. Parse query parameters with fallbacks
+  const page = parseInt(req.query.page, 10) || 1;
+  const limit = parseInt(req.query.limit, 10) || 6;
+
+  // 2. Calculate how many records to skip
+  const skip = (page - 1) * limit;
+
+  try {
+    // 3. Fetch ONLY the requested page of data
+    const companies = await prisma.companies.findMany({
+      skip: skip,
+      take: limit,
       orderBy: {
         created_at: "desc",
       },
-      page: parseInt(page),
-      limit: parseInt(limit),
     });
 
+    // 4. Return the data and basic local pagination info
     res.status(200).json({
-      data: serializeBigInt(data),
-      pagination: meta,
+      data: serializeBigInt(companies), // Retaining your BigInt serializer
+      pagination: {
+        currentPage: page,
+        itemsPerPage: limit,
+      },
     });
   } catch (error) {
     console.error("Error fetching companies:", error);
@@ -40,17 +68,14 @@ export const getCompaniesCount = async (req, res) => {
   try {
     const totalCount = await prisma.companies.count({
       where: {
-        // Add any filters here if needed (is_active: true, etc.)
+        deleted_at: null, 
       },
     });
 
-    res.status(200).json({
-      totalCount,
-      success: true,
-    });
+    res.status(200).json({ totalCount, success: true });
   } catch (error) {
-    console.error("Error fetching companies count:", error);
-    res.status(500).json({ message: "Failed to fetch companies count" });
+    console.error("Error fetching count:", error);
+    res.status(500).json({ message: "Failed to fetch count" });
   }
 };
 

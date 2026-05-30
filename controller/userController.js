@@ -3,7 +3,6 @@ import bcrypt from "bcryptjs";
 import express from "express";
 import RBACFilterService from "../utils/rbacFilterService.js";
 
-// withoud any role id
 // export async function getUser(req, res) {
 
 //   try {
@@ -37,107 +36,124 @@ import RBACFilterService from "../utils/rbacFilterService.js";
 //   }
 // }
 
-// export async function getUser(req, res) {
-//   try {
-//     const { companyId } = req.query;
-//     const currentUser = req.user; // From auth middleware
-//     // console.log(companyId, "companyId");
-//     // console.log(currentUser, "current user");
 
-//     // Step 1: Get role-based filter
-//     const userFilter = await RBACFilterService.getUserFilter(
-//       currentUser,
-//       "getUser",
-//     );
+export async function getclientUser(req, res) {
+  try {
+    const { companyId, roleId, page = 1, limit = 15, search } = req.query;
+    const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
+    const parsedLimit = Math.max(parseInt(limit, 10) || 15, 1);
+    const skip = (parsedPage - 1) * parsedLimit;
 
-//     // console.log(userFilter, "user filter from rbac service");
-//     // Step 2: Build complete where clause
-//     const whereClause = {
-//       company_id: companyId,
-//       ...userFilter, // Merge filter from getUserFilter
-//     };
+    // 1. Get Base RBAC Filter
+    const userFilter = await RBACFilterService.getUserFilter(req.user, "getUser");
 
-//     // console.log(whereClause, "final where clause");
+    // 2. Base Where (used for grouping all available roles)
+    const baseWhere = { ...userFilter, deleted_at: null };
+    if (companyId) {
+      baseWhere.company_id = BigInt(companyId);
+    }
 
-//     // Step 3: Fetch filtered users
-//     const users = await prisma.users.findMany({
-//       where: whereClause,
-//       include: {
-//         role: true,
-//         cleaner_assignments_as_cleaner: {
-//           where: {
-//             deleted_at: null,
-//           },
-//           select: {
-//             name: true,
+    // 3. Main Where (used for the table list and total pagination count)
+    const mainWhere = { ...baseWhere };
+    if (roleId && roleId !== "all") {
+      mainWhere.role_id = Number(roleId);
+    }
+    
+    if (search) {
+      mainWhere.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+        { phone: { contains: search, mode: 'insensitive' } }
+      ];
+    }
 
-//             locations: {
-//               select: {
-//                 name: true,
-//               },
-//             },
-//           },
-//         },
-//       },
-//       orderBy: { id: "desc" },
-//     });
+    // 4. THE FIX: Added the groupBy query back into the transaction array!
+    const [users, totalCount, roleCountsRaw] = await prisma.$transaction([
+      // Query 1: Get the actual user rows
+      prisma.users.findMany({
+        where: mainWhere, 
+        skip: skip,       
+        take: parsedLimit,
+        include: { role: true },
+        orderBy: { id: "desc" },
+      }),
+      // Query 2: Get total count for pagination
+      prisma.users.count({ 
+        where: mainWhere  
+      }),
+      // Query 3: Get the individual role counts for the top cards
+      prisma.users.groupBy({
+        by: ['role_id'],
+        where: baseWhere, // Use baseWhere so cards show ALL counts, regardless of search
+        _count: { _all: true }
+      })
+    ]);
 
-//     // Convert BigInt to string
-//     const usersWithStringIds = users.map((user) => ({
-//       ...user,
-//       id: user.id.toString(),
-//       company_id: user.company_id?.toString() || null,
-//     }));
+    // Format role counts for frontend cards safely
+    const roleCounts = roleCountsRaw.reduce((acc, item) => {
+      if (item.role_id) acc[item.role_id.toString()] = item._count._all;
+      return acc;
+    }, {});
 
-//     // console.log(usersWithStringIds, "filtered users");
-//     res.json(usersWithStringIds);
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).send({ msg: "Error fetching users", err });
-//   }
-// }
+    // Format user IDs
+    const formattedUsers = users.map((user) => ({
+      ...user,
+      id: user.id.toString(),
+      company_id: user.company_id?.toString() || null,
+    }));
+
+    // Return Data
+    res.status(200).json({
+      data: formattedUsers,
+      roleCounts: roleCounts, // Now this will successfully pass to the frontend
+      meta: {
+        totalCount: totalCount,
+        totalPages: Math.ceil(totalCount / parsedLimit),
+        currentPage: parsedPage,
+        itemsPerPage: parsedLimit,
+      },
+    });
+
+  } catch (error) {
+    console.error("Error fetching users with RBAC and Pagination:", error);
+    res.status(500).json({ 
+      status: "error", 
+      message: "Internal Server Error fetching users." 
+    });
+  }
+}
 
 export async function getUser(req, res) {
   try {
-    const { companyId, roleId } = req.query;
+    const { companyId, roleId, page = 1, limit = 10 } = req.query;
+    const parsedPage = parseInt(page, 10);
+    const parsedLimit = parseInt(limit, 10);
+    const skip = (parsedPage - 1) * parsedLimit;
     const currentUser = req.user;
 
-    const userFilter = await RBACFilterService.getUserFilter(
-      currentUser,
-      "getUser",
-    );
+    const userFilter = await RBACFilterService.getUserFilter(currentUser, "getUser");
 
-    const whereClause = {
-      ...userFilter,
-    };
+    const whereClause = { ...userFilter, deleted_at: null };
+    if (companyId) whereClause.company_id = BigInt(companyId);
+    if (roleId) whereClause.role_id = Number(roleId);
 
-    // Only add company filter if provided
-    if (companyId) {
-      whereClause.company_id = BigInt(companyId);
-    }
-
-    // Only add role filter if provided
-    if (roleId) {
-      whereClause.role_id = Number(roleId);
-      // use BigInt(roleId) if your schema uses BigInt
-    }
-
-    const users = await prisma.users.findMany({
-      where: whereClause,
-      include: {
-        role: true,
-        cleaner_assignments_as_cleaner: {
-          where: { deleted_at: null },
-          select: {
-            name: true,
-            locations: {
-              select: { name: true },
-            },
+    // Run both queries in one transaction
+    const [users, totalCount] = await prisma.$transaction([
+      prisma.users.findMany({
+        where: whereClause,
+        skip: skip,
+        take: parsedLimit,
+        include: {
+          role: true,
+          cleaner_assignments_as_cleaner: {
+            where: { deleted_at: null },
+            select: { name: true, locations: { select: { name: true } } },
           },
         },
-      },
-      orderBy: { id: "desc" },
-    });
+        orderBy: { id: "desc" },
+      }),
+      prisma.users.count({ where: whereClause }), // Same filter applied for accurate count
+    ]);
 
     const usersWithStringIds = users.map((user) => ({
       ...user,
@@ -145,10 +161,41 @@ export async function getUser(req, res) {
       company_id: user.company_id?.toString() || null,
     }));
 
-    res.json(usersWithStringIds);
+    // Return object containing both data and metadata
+    res.json({
+      data: usersWithStringIds,
+      meta: {
+        totalCount,
+        totalPages: Math.ceil(totalCount / parsedLimit),
+        currentPage: parsedPage,
+        itemsPerPage: parsedLimit,
+      },
+    });
   } catch (err) {
     console.error(err);
     res.status(500).send({ msg: "Error fetching users", err });
+  }
+}
+
+export async function getUsersCount(req, res) {
+  try {
+    const { roleId, companyId } = req.query;
+    const currentUser = req.user;
+
+    // Use your existing RBAC service
+    const userFilter = await RBACFilterService.getUserFilter(currentUser, "getUser");
+
+    const whereClause = { ...userFilter, deleted_at: null };
+    if (companyId) whereClause.company_id = BigInt(companyId);
+    if (roleId) whereClause.role_id = Number(roleId);
+
+    // Get the total count across ALL pages
+    const totalCount = await prisma.users.count({ where: whereClause });
+
+    res.json({ totalCount, success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Error fetching user count" });
   }
 }
 

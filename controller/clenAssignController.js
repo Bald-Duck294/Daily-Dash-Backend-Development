@@ -3,102 +3,185 @@ import RBACFilterService from "../utils/rbacFilterService.js";
 import { serializeBigInt } from "../utils/serializer.js";
 
 
+// export const getAllAssignments = async (req, res) => {
+//   try {
+
+//     const user = req.user;
+//     // Fetch assignments with locations
+//     console.log('hitting get assignment')
+//     console.log('in get all assignment');
+//     const { company_id, role_id } = req.query;
+
+//     if (!company_id) {
+//       return res.status(400).json({
+//         status: "error",
+//         message: "company_id query parameter is required."
+//       });
+//     }
+
+//     let whereClause = {};
+
+
+//     if (req.user.role_id === 3) {
+//       console.log("Supervisor - excluding other supervisors");
+//       whereClause.role_id = {
+//         not: 3  // Exclude role_id 3 (supervisors)
+//       };
+//     }
+
+
+//     console.log(req.query, "req query");
+//     // console.log(req.user, "req user");
+//     if (company_id) {
+//       whereClause.company_id = company_id;
+//     }
+
+//     if (role_id && role_id !== 'undefined') {
+//       const requestedRoleId = parseInt(role_id);
+
+//       // If supervisor is filtering, make sure they can't override the exclusion
+//       if (req.user.role_id === 3 && requestedRoleId === 3) {
+//         console.log("Supervisor cannot filter to see other supervisors");
+//         // Don't apply this filter - keep the NOT filter
+//       } else {
+//         whereClause.role_id = requestedRoleId;
+//       }
+//     }
+
+//     const filteredLocationIds = await RBACFilterService.getLocationFilter(user, "cleaner_activity")
+//     console.log(filteredLocationIds, "filteredlocations ")
+
+//     whereClause = {
+//       ...whereClause,
+//       ...filteredLocationIds
+//     }
+
+//     console.log("final where cause", whereClause)
+
+//     const assignments = await prisma.cleaner_assignments.findMany({
+//       where: whereClause,
+//       include: {
+//         locations: true,
+//         role: {
+//           select: {
+//             id: true,
+//             name: true
+//           }
+//         }
+//       },
+
+//       orderBy: { id: "desc" },
+//     });
+
+//     console.log(company_id, "company_id");
+//     // console.log(assignments, "in ass")
+//     // Collect user IDs
+//     const userIds = assignments.map((a) => a.cleaner_user_id);
+
+//     // Fetch users
+//     const users = await prisma.users.findMany({
+//       where: { id: { in: userIds } },
+//       select: { id: true, name: true, email: true }, // pick only what you need
+//     });
+
+//     // Map userId → user object
+//     const userMap = Object.fromEntries(users.map((u) => [u.id.toString(), u]));
+
+//     // Attach user to each assignment
+//     const assignmentsWithUsers = assignments.map((a) => ({
+//       ...a,
+//       user: userMap[a.cleaner_user_id.toString()] || null,
+//     }));
+
+//     console.log(assignmentsWithUsers.length, "assignment with user length")
+//     // console.log(assignmentsWithUsers, "assigned  users ");
+//     res.status(200).json({
+//       status: "success",
+//       message: "Assignments retrieved successfully.",
+//       data: serializeBigInt(assignmentsWithUsers),
+//     });
+//   } catch (error) {
+//     console.error("Error fetching assignments:", error);
+//     res.status(500).json({ status: "error", message: "Internal Server Error" });
+//   }
+// };
+
 export const getAllAssignments = async (req, res) => {
   try {
-
     const user = req.user;
-    // Fetch assignments with locations
-    console.log('hitting get assignment')
-    console.log('in get all assignment');
+
+    // --- 1. PAGINATION ---
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 15;
+    const skip = (page - 1) * limit;
     const { company_id, role_id } = req.query;
 
     if (!company_id) {
-      return res.status(400).json({
-        status: "error",
-        message: "company_id query parameter is required."
-      });
+      return res.status(400).json({ status: "error", message: "company_id required." });
     }
 
-    let whereClause = {};
-
+    let whereClause = { deleted_at: null }; // Ensure we only get active assignments
 
     if (req.user.role_id === 3) {
-      console.log("Supervisor - excluding other supervisors");
-      whereClause.role_id = {
-        not: 3  // Exclude role_id 3 (supervisors)
-      };
+      whereClause.role_id = { not: 3 };
     }
-
-
-    console.log(req.query, "req query");
-    // console.log(req.user, "req user");
     if (company_id) {
       whereClause.company_id = company_id;
     }
-
     if (role_id && role_id !== 'undefined') {
       const requestedRoleId = parseInt(role_id);
-
-      // If supervisor is filtering, make sure they can't override the exclusion
-      if (req.user.role_id === 3 && requestedRoleId === 3) {
-        console.log("Supervisor cannot filter to see other supervisors");
-        // Don't apply this filter - keep the NOT filter
-      } else {
+      if (!(req.user.role_id === 3 && requestedRoleId === 3)) {
         whereClause.role_id = requestedRoleId;
       }
     }
 
-    const filteredLocationIds = await RBACFilterService.getLocationFilter(user, "cleaner_activity")
-    console.log(filteredLocationIds, "filteredlocations ")
+    const filteredLocationIds = await RBACFilterService.getLocationFilter(user, "cleaner_activity");
+    whereClause = { ...whereClause, ...filteredLocationIds };
 
-    whereClause = {
-      ...whereClause,
-      ...filteredLocationIds
-    }
-
-    console.log("final where cause", whereClause)
+    // --- 2. COUNT & FETCH ---
+    const totalRecords = await prisma.cleaner_assignments.count({ where: whereClause });
 
     const assignments = await prisma.cleaner_assignments.findMany({
       where: whereClause,
-      include: {
-        locations: true,
-        role: {
-          select: {
-            id: true,
-            name: true
-          }
-        }
-      },
-
+      skip,
+      take: limit,
       orderBy: { id: "desc" },
+      // SELECT ONLY WHAT IS NEEDED
+      select: {
+        id: true,
+        status: true,
+        assigned_on: true,
+        locations: {
+          select: { name: true } // Only get location name
+        },
+        role: {
+          select: { name: true } // Only get role name
+        },
+        cleaner_user: {
+          select: { name: true, email: true } // Only get user name and email
+        }
+      }
     });
 
-    console.log(company_id, "company_id");
-    // console.log(assignments, "in ass")
-    // Collect user IDs
-    const userIds = assignments.map((a) => a.cleaner_user_id);
-
-    // Fetch users
-    const users = await prisma.users.findMany({
-      where: { id: { in: userIds } },
-      select: { id: true, name: true, email: true }, // pick only what you need
-    });
-
-    // Map userId → user object
-    const userMap = Object.fromEntries(users.map((u) => [u.id.toString(), u]));
-
-    // Attach user to each assignment
-    const assignmentsWithUsers = assignments.map((a) => ({
+    // --- 3. LEAN MAP ---
+    // Prisma returns the nested objects directly now, no extra mapping needed!
+    const result = assignments.map(a => ({
       ...a,
-      user: userMap[a.cleaner_user_id.toString()] || null,
+      id: a.id.toString(),
+      user: a.cleaner_user, // Directly map the user object from the relation
+      locations: a.locations,
+      role: a.role
     }));
 
-    console.log(assignmentsWithUsers.length, "assignment with user length")
-    // console.log(assignmentsWithUsers, "assigned  users ");
     res.status(200).json({
       status: "success",
-      message: "Assignments retrieved successfully.",
-      data: serializeBigInt(assignmentsWithUsers),
+      data: serializeBigInt(result),
+      pagination: {
+        total: totalRecords,
+        page,
+        limit,
+        last_page: Math.ceil(totalRecords / limit) || 1
+      }
     });
   } catch (error) {
     console.error("Error fetching assignments:", error);
@@ -106,6 +189,103 @@ export const getAllAssignments = async (req, res) => {
   }
 };
 
+// export const getAllAssignments = async (req, res) => {
+//   try {
+//     const user = req.user;
+
+//     // --- 1. EXTRACT PAGINATION PARAMS ---
+//     const page = parseInt(req.query.page) || 1;
+//     const limit = parseInt(req.query.limit) || 15;
+//     const skip = (page - 1) * limit;
+
+//     const { company_id, role_id } = req.query;
+
+//     if (!company_id) {
+//       return res.status(400).json({
+//         status: "error",
+//         message: "company_id query parameter is required."
+//       });
+//     }
+
+//     // ✅ ADDED: Initialize whereClause to explicitly exclude soft-deleted records
+//     let whereClause = { deleted_at: null };
+
+//     if (req.user.role_id === 3) {
+//       whereClause.role_id = { not: 3 };
+//     }
+
+//     if (company_id) {
+//       whereClause.company_id = company_id;
+//     }
+
+//     if (role_id && role_id !== 'undefined') {
+//       const requestedRoleId = parseInt(role_id);
+//       if (!(req.user.role_id === 3 && requestedRoleId === 3)) {
+//         whereClause.role_id = requestedRoleId;
+//       }
+//     }
+
+//     const filteredLocationIds = await RBACFilterService.getLocationFilter(user, "cleaner_activity");
+
+//     whereClause = {
+//       ...whereClause,
+//       ...filteredLocationIds
+//     };
+
+//     // --- 2. GET TOTAL COUNT (Now automatically respects deleted_at: null) ---
+//     const totalRecords = await prisma.cleaner_assignments.count({
+//       where: whereClause,
+//     });
+
+//     // --- 3. FETCH WITH SKIP & TAKE (Now automatically respects deleted_at: null) ---
+//     const assignments = await prisma.cleaner_assignments.findMany({
+//       where: whereClause,
+//       skip: skip,
+//       take: limit,
+//       include: {
+//         locations: true,
+//         role: {
+//           select: { id: true, name: true }
+//         }
+//       },
+//       orderBy: { id: "desc" },
+//     });
+
+//     // Collect user IDs
+//     const userIds = assignments.map((a) => a.cleaner_user_id);
+
+//     // Fetch users
+//     const users = await prisma.users.findMany({
+//       where: { id: { in: userIds } },
+//       select: { id: true, name: true, email: true }, 
+//     });
+
+//     // Map userId → user object
+//     const userMap = Object.fromEntries(users.map((u) => [u.id.toString(), u]));
+
+//     // Attach user to each assignment
+//     const assignmentsWithUsers = assignments.map((a) => ({
+//       ...a,
+//       user: userMap[a.cleaner_user_id.toString()] || null,
+//     }));
+
+//     // --- 4. RETURN DATA AND PAGINATION METADATA ---
+//     res.status(200).json({
+//       status: "success",
+//       message: "Assignments retrieved successfully.",
+//       data: serializeBigInt(assignmentsWithUsers),
+//       pagination: {
+//         total: totalRecords,
+//         page: page,
+//         limit: limit,
+//         last_page: Math.ceil(totalRecords / limit) || 1
+//       }
+//     });
+//   } catch (error) {
+//     console.error("Error fetching assignments:", error);
+//     res.status(500).json({ status: "error", message: "Internal Server Error" });
+//   }
+// };
 
 export const getAssignmentByCleanerUserId = async (req, res) => {
   try {

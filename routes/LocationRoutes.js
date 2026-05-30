@@ -10,7 +10,8 @@ import {
   updateLocationById,
   deleteLocationById,
   toggleStatusToilet,
-  getAllToiletsForWeb
+  getAllToiletsForWeb,
+  getMapToilets,
 } from "../controller/LocationsController.js";
 import { upload, processAndUploadImages } from "../middlewares/imageUpload.js"
 import { verifyToken } from "../middlewares/authMiddleware.js";
@@ -22,6 +23,7 @@ const getLocationRoutes = express.Router();
 getLocationRoutes.get("/loc", getAllToilets);
 getLocationRoutes.get("/", verifyToken, getAllToilets);
 getLocationRoutes.get("/saafai_locations", getAllToiletsForWeb)
+getLocationRoutes.get("/map",verifyToken, getMapToilets)
 
 // getLocationRoutes.post("/", createLocation);
 

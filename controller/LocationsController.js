@@ -3,324 +3,240 @@ import db from "../db.js";
 // import RBACFilterService from "../services/rbacFilterService.js";
 import RBACFilterService from "../utils/rbacFilterService.js";
 
-export const getAllToilets = async (req, res) => {
-  // console.log("get all toilets");
-  try {
-    // STEP 1: Get user from JWT (already set by verifyToken middleware)
-    const user = req.user;
-    if (!user) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-
-    // console.log("User from JWT:", user);  // { id, role_id, company_id, email }
-
-    const { company_id, type_id, include_unavailable } = req.query;
-
-    // STEP 2: Build base where clause from query params
-    const whereClause = {};
-
-    // STEP 3: Get role-based filter (automatic based on user's role)
-    const roleFilter = await RBACFilterService.getLocationFilter(user);
-
-    // console.log(roleFilter, "filters data")
-    // STEP 4: Merge role filter into where clause
-    Object.assign(whereClause, roleFilter);
-
-    // STEP 5: Add company filter (only if super admin overrides, otherwise use role filter)
-    if (user.role_id === 1 && company_id) {
-      // console.log('inside user role id')
-      // Super admin can override company filter
-      whereClause.company_id = BigInt(company_id);
-    } else if (user.role_id === 2 && company_id) {
-      whereClause.company_id = BigInt(company_id);
-    }
-    // else if (!roleFilter.company_id && user.company_id) {
-    //   // If role filter doesn't set company, add user's company
-    //   whereClause.company_id = user.company_id;
-    // }
-    else {
-      whereClause.company_id = company_id;
-    }
-
-    // console.log(whereClause, "where clause")
-
-    // STEP 6: Add type filter from query
-    if (type_id) {
-      whereClause.type_id = BigInt(type_id);
-    }
-
-    // STEP 7: Add status filter
-    if (include_unavailable !== "true") {
-      whereClause.OR = [{ status: true }, { status: null }];
-    }
-
-    // console.log("Final where clause:", whereClause);
-
-    const today = new Date();
-    const startOfDay = new Date(
-      today.getFullYear(),
-      today.getMonth(),
-      today.getDate(),
-      0,
-      0,
-      0,
-      0,
-    );
-    const endOfDay = new Date(
-      today.getFullYear(),
-      today.getMonth(),
-      today.getDate(),
-      23,
-      59,
-      59,
-      999,
-    );
-
-    // STEP 8: Query database with merged filters
-    const allLocations = await prisma.locations.findMany({
-      where: Object.keys(whereClause).length ? whereClause : undefined,
-      include: {
-        hygiene_scores: {
-          where: {
-            created_at: {
-              gte: startOfDay,
-              lte: endOfDay,
-            },
-          },
-          select: {
-            score: true,
-            created_at: true,
-          },
-          orderBy: {
-            created_at: "desc",
-          },
-          take: 1, // Get only the most recent score from today
-        },
-        cleaner_reviews: {
-          select: {
-            score: true,
-          },
-        },
-        location_types: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        facility_companies: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-
-        cleaner_assignments: {
-          where: {
-            deleted_at: null,
-            cleaner_user: {
-              role_id: 5, // Only cleaners
-            },
-          },
-          select: {
-            id: true,
-            status: true,
-            assigned_on: true,
-            cleaner_user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                phone: true,
-              },
-            },
-          },
-          orderBy: {
-            assigned_on: "desc",
-          },
-        },
-      },
-      orderBy: {
-        created_at: "desc",
-      },
-      // take: 4
-    });
-
-    // console.log("Fetched locations count:", allLocations);
-    // console.dir(allLocations[3], { depth: null });
-
-    // console.dir("all locations", { depth: null });
-    // STEP 9: Format response (SAME as before)
-
-    const result = allLocations.map((loc) => {
-      const hygieneScores = loc.cleaner_reviews.map((hs) => Number(hs.score));
-      const ratingCount = hygieneScores.length;
-
-      let averageRating = null;
-      if (ratingCount > 0) {
-        const sumOfScores = hygieneScores.reduce(
-          (sum, score) => sum + score,
-          0,
-        );
-        averageRating = sumOfScores / ratingCount;
-      }
-
-      const currentScore =
-        loc.hygiene_scores.length > 0
-          ? Number(loc.hygiene_scores[0].score)
-          : null;
-
-      //   const hygieneScores = loc.hygiene_scores.map(hs => Number(hs.score));
-      // const ratingCount = hygieneScores.length;
-
-      // let averageRating = null;
-      // if (ratingCount > 0) {
-      //   const sumOfScores = hygieneScores.reduce((sum, score) => sum + score, 0);
-      //   averageRating = sumOfScores / ratingCount;
-      // }
-
-      // return {
-      //   ...loc,
-      //   id: loc.id.toString(),
-      //   parent_id: loc.parent_id?.toString() || null,
-      //   company_id: loc.company_id?.toString() || null,
-      //   type_id: loc.type_id?.toString() || null,
-      //   facility_company_id: loc?.facility_company_id?.toString() || null,
-      //   images: loc.images || [],
-      //   averageRating: averageRating ? parseFloat(averageRating.toFixed(2)) : null,
-      //   ratingCount,
-      //   hygiene_scores: undefined,
-      //   location_types: {
-      //     ...loc.location_types,
-      //     id: loc?.location_types?.toString()
-      //   }
-      // };
-
-      return {
-        ...loc,
-        id: loc.id.toString(),
-        parent_id: loc.parent_id?.toString() || null,
-        company_id: loc.company_id?.toString() || null,
-        type_id: loc.type_id?.toString() || null,
-        facility_company_id: loc?.facility_company_id?.toString() || null,
-        images: loc.images || [],
-        averageRating: averageRating
-          ? parseFloat(averageRating.toFixed(2))
-          : null,
-        ratingCount,
-        currentScore: currentScore,
-        hygiene_scores: undefined,
-        location_types: {
-          ...loc.location_types,
-          id: loc?.location_types?.id?.toString(),
-        },
-        facility_companies: loc.facility_companies
-          ? {
-            ...loc.facility_companies,
-            id: loc.facility_companies.id.toString(),
-          }
-          : null,
-        cleaner_assignments: loc.cleaner_assignments.map((assignment) => ({
-          ...assignment,
-          id: assignment.id.toString(),
-          cleaner_user: {
-            ...assignment.cleaner_user,
-            id: assignment.cleaner_user.id.toString(),
-          },
-        })),
-      };
-    });
-
-    // console.log(" Get all Result count:", result.length);
-    res.json(result); // ← Response format unchanged
-  } catch (err) {
-    console.error(err);
-    res.status(500).send("Error fetching toilet locations");
-  }
-};
-
-
-
-// const validateAndFormatSchedule = (scheduleInput) => {
-//   if (!scheduleInput) return null;
-
-//   let schedule = scheduleInput;
-
-//   // If coming as string (multipart form-data case)
-//   if (typeof scheduleInput === "string") {
-//     try {
-//       schedule = JSON.parse(scheduleInput);
-//     } catch (err) {
-//       throw new Error("Invalid schedule JSON format");
-//     }
-//   }
-
-//   if (!schedule.type) {
-//     throw new Error("Schedule type is required");
-//   }
-
-//   // ✅ 24 HOURS
-//   if (schedule.type === "24H") {
-//     return { type: "24H" };
-//   }
-
-//   // ✅ FIXED HOURS
-//   if (schedule.type === "FIXED") {
-//     if (!schedule.openTime || !schedule.closeTime) {
-//       throw new Error("openTime and closeTime are required for FIXED schedule");
+// export const getAllToilets = async (req, res) => {
+//   // console.log("get all toilets");
+//   try {
+//     // STEP 1: Get user from JWT (already set by verifyToken middleware)
+//     const user = req.user;
+//     if (!user) {
+//       return res.status(401).json({ message: "Unauthorized" });
 //     }
 
-//     return {
-//       type: "FIXED",
-//       openTime: schedule.openTime,
-//       closeTime: schedule.closeTime,
-//     };
-//   }
+//     // console.log("User from JWT:", user);  // { id, role_id, company_id, email }
 
-//   // ✅ DAY WISE
-//   if (schedule.type === "DAY_WISE") {
-//     if (!schedule.days || typeof schedule.days !== "object") {
-//       throw new Error("Days object required for DAY_WISE schedule");
+//     const { company_id, type_id, include_unavailable } = req.query;
+
+//     // STEP 2: Build base where clause from query params
+//     const whereClause = {};
+
+//     // STEP 3: Get role-based filter (automatic based on user's role)
+//     const roleFilter = await RBACFilterService.getLocationFilter(user);
+
+//     // console.log(roleFilter, "filters data")
+//     // STEP 4: Merge role filter into where clause
+//     Object.assign(whereClause, roleFilter);
+
+//     // STEP 5: Add company filter (only if super admin overrides, otherwise use role filter)
+//     if (user.role_id === 1 && company_id) {
+//       // console.log('inside user role id')
+//       // Super admin can override company filter
+//       whereClause.company_id = BigInt(company_id);
+//     } else if (user.role_id === 2 && company_id) {
+//       whereClause.company_id = BigInt(company_id);
+//     }
+//     // else if (!roleFilter.company_id && user.company_id) {
+//     //   // If role filter doesn't set company, add user's company
+//     //   whereClause.company_id = user.company_id;
+//     // }
+//     else {
+//       whereClause.company_id = company_id;
 //     }
 
-//     const validDays = [
-//       "monday",
-//       "tuesday",
-//       "wednesday",
-//       "thursday",
-//       "friday",
-//       "saturday",
-//       "sunday",
-//     ];
+//     // console.log(whereClause, "where clause")
 
-//     const formattedDays = {};
+//     // STEP 6: Add type filter from query
+//     if (type_id) {
+//       whereClause.type_id = BigInt(type_id);
+//     }
 
-//     for (const day of validDays) {
-//       const dayData = schedule.days[day];
+//     // STEP 7: Add status filter
+//     if (include_unavailable !== "true") {
+//       whereClause.OR = [{ status: true }, { status: null }];
+//     }
 
-//       if (!dayData || dayData.enabled === false) {
-//         formattedDays[day] = { enabled: false };
-//       } else {
-//         if (!dayData.openTime || !dayData.closeTime) {
-//           throw new Error(`${day} must have openTime and closeTime`);
-//         }
+//     // console.log("Final where clause:", whereClause);
 
-//         formattedDays[day] = {
-//           enabled: true,
-//           openTime: dayData.openTime,
-//           closeTime: dayData.closeTime,
-//         };
+//     const today = new Date();
+//     const startOfDay = new Date(
+//       today.getFullYear(),
+//       today.getMonth(),
+//       today.getDate(),
+//       0,
+//       0,
+//       0,
+//       0,
+//     );
+//     const endOfDay = new Date(
+//       today.getFullYear(),
+//       today.getMonth(),
+//       today.getDate(),
+//       23,
+//       59,
+//       59,
+//       999,
+//     );
+
+//     // STEP 8: Query database with merged filters
+//     const allLocations = await prisma.locations.findMany({
+//       where: Object.keys(whereClause).length ? whereClause : undefined,
+//       include: {
+//         hygiene_scores: {
+//           where: {
+//             created_at: {
+//               gte: startOfDay,
+//               lte: endOfDay,
+//             },
+//           },
+//           select: {
+//             score: true,
+//             created_at: true,
+//           },
+//           orderBy: {
+//             created_at: "desc",
+//           },
+//           take: 1, // Get only the most recent score from today
+//         },
+//         cleaner_reviews: {
+//           select: {
+//             score: true,
+//           },
+//         },
+//         location_types: {
+//           select: {
+//             id: true,
+//             name: true,
+//           },
+//         },
+//         facility_companies: {
+//           select: {
+//             id: true,
+//             name: true,
+//           },
+//         },
+
+//         cleaner_assignments: {
+//           where: {
+//             deleted_at: null,
+//             cleaner_user: {
+//               role_id: 5, // Only cleaners
+//             },
+//           },
+//           select: {
+//             id: true,
+//             status: true,
+//             assigned_on: true,
+//             cleaner_user: {
+//               select: {
+//                 id: true,
+//                 name: true,
+//                 email: true,
+//                 phone: true,
+//               },
+//             },
+//           },
+//           orderBy: {
+//             assigned_on: "desc",
+//           },
+//         },
+//       },
+//       orderBy: {
+//         created_at: "desc",
+//       },
+//       // take: 4
+//     });
+
+//     // console.log("Fetched locations count:", allLocations);
+//     // console.dir(allLocations[3], { depth: null });
+
+//     // console.dir("all locations", { depth: null });
+//     // STEP 9: Format response (SAME as before)
+
+//     const result = allLocations.map((loc) => {
+//       const hygieneScores = loc.cleaner_reviews.map((hs) => Number(hs.score));
+//       const ratingCount = hygieneScores.length;
+
+//       let averageRating = null;
+//       if (ratingCount > 0) {
+//         const sumOfScores = hygieneScores.reduce(
+//           (sum, score) => sum + score,
+//           0,
+//         );
+//         averageRating = sumOfScores / ratingCount;
 //       }
-//     }
 
-//     return {
-//       type: "DAY_WISE",
-//       days: formattedDays,
-//     };
+//       const currentScore =
+//         loc.hygiene_scores.length > 0
+//           ? Number(loc.hygiene_scores[0].score)
+//           : null;
+
+//       //   const hygieneScores = loc.hygiene_scores.map(hs => Number(hs.score));
+//       // const ratingCount = hygieneScores.length;
+
+//       // let averageRating = null;
+//       // if (ratingCount > 0) {
+//       //   const sumOfScores = hygieneScores.reduce((sum, score) => sum + score, 0);
+//       //   averageRating = sumOfScores / ratingCount;
+//       // }
+
+//       // return {
+//       //   ...loc,
+//       //   id: loc.id.toString(),
+//       //   parent_id: loc.parent_id?.toString() || null,
+//       //   company_id: loc.company_id?.toString() || null,
+//       //   type_id: loc.type_id?.toString() || null,
+//       //   facility_company_id: loc?.facility_company_id?.toString() || null,
+//       //   images: loc.images || [],
+//       //   averageRating: averageRating ? parseFloat(averageRating.toFixed(2)) : null,
+//       //   ratingCount,
+//       //   hygiene_scores: undefined,
+//       //   location_types: {
+//       //     ...loc.location_types,
+//       //     id: loc?.location_types?.toString()
+//       //   }
+//       // };
+
+//       return {
+//         ...loc,
+//         id: loc.id.toString(),
+//         parent_id: loc.parent_id?.toString() || null,
+//         company_id: loc.company_id?.toString() || null,
+//         type_id: loc.type_id?.toString() || null,
+//         facility_company_id: loc?.facility_company_id?.toString() || null,
+//         images: loc.images || [],
+//         averageRating: averageRating
+//           ? parseFloat(averageRating.toFixed(2))
+//           : null,
+//         ratingCount,
+//         currentScore: currentScore,
+//         hygiene_scores: undefined,
+//         location_types: {
+//           ...loc.location_types,
+//           id: loc?.location_types?.id?.toString(),
+//         },
+//         facility_companies: loc.facility_companies
+//           ? {
+//             ...loc.facility_companies,
+//             id: loc.facility_companies.id.toString(),
+//           }
+//           : null,
+//         cleaner_assignments: loc.cleaner_assignments.map((assignment) => ({
+//           ...assignment,
+//           id: assignment.id.toString(),
+//           cleaner_user: {
+//             ...assignment.cleaner_user,
+//             id: assignment.cleaner_user.id.toString(),
+//           },
+//         })),
+//       };
+//     });
+
+//     // console.log(" Get all Result count:", result.length);
+//     res.json(result); // ← Response format unchanged
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).send("Error fetching toilet locations");
 //   }
-
-//   throw new Error("Invalid schedule type");
 // };
-
 
 const validateAndFormatSchedule = (scheduleInput) => {
   if (!scheduleInput) return null;
@@ -412,7 +328,512 @@ const validateAndFormatSchedule = (scheduleInput) => {
   throw new Error("Invalid schedule mode");
 };
 
+// const validateAndFormatSchedule = (scheduleInput) => {
+//   if (!scheduleInput) return null;
 
+//   let schedule = scheduleInput;
+
+//   // If coming as string (multipart form-data case)
+//   if (typeof scheduleInput === "string") {
+//     try {
+//       schedule = JSON.parse(scheduleInput);
+//     } catch (err) {
+//       throw new Error("Invalid schedule JSON format");
+//     }
+//   }
+
+//   if (!schedule.type) {
+//     throw new Error("Schedule type is required");
+//   }
+
+//   // ✅ 24 HOURS
+//   if (schedule.type === "24H") {
+//     return { type: "24H" };
+//   }
+
+//   // ✅ FIXED HOURS
+//   if (schedule.type === "FIXED") {
+//     if (!schedule.openTime || !schedule.closeTime) {
+//       throw new Error("openTime and closeTime are required for FIXED schedule");
+//     }
+
+//     return {
+//       type: "FIXED",
+//       openTime: schedule.openTime,
+//       closeTime: schedule.closeTime,
+//     };
+//   }
+
+//   // ✅ DAY WISE
+//   if (schedule.type === "DAY_WISE") {
+//     if (!schedule.days || typeof schedule.days !== "object") {
+//       throw new Error("Days object required for DAY_WISE schedule");
+//     }
+
+//     const validDays = [
+//       "monday",
+//       "tuesday",
+//       "wednesday",
+//       "thursday",
+//       "friday",
+//       "saturday",
+//       "sunday",
+//     ];
+
+//     const formattedDays = {};
+
+//     for (const day of validDays) {
+//       const dayData = schedule.days[day];
+
+//       if (!dayData || dayData.enabled === false) {
+//         formattedDays[day] = { enabled: false };
+//       } else {
+//         if (!dayData.openTime || !dayData.closeTime) {
+//           throw new Error(`${day} must have openTime and closeTime`);
+//         }
+
+//         formattedDays[day] = {
+//           enabled: true,
+//           openTime: dayData.openTime,
+//           closeTime: dayData.closeTime,
+//         };
+//       }
+//     }
+
+//     return {
+//       type: "DAY_WISE",
+//       days: formattedDays,
+//     };
+//   }
+
+//   throw new Error("Invalid schedule type");
+// };
+
+// export const getAllToilets = async (req, res) => {
+//   // console.log("get all toilets");
+//   try {
+//     const user = req.user;
+//     if (!user) {
+//       return res.status(401).json({ message: "Unauthorized" });
+//     }
+
+//     // --- NEW: EXTRACT PAGINATION PARAMS ---
+//     const page = parseInt(req.query.page) || 1;
+//     const limit = parseInt(req.query.limit) || 15;
+//     const skip = (page - 1) * limit;
+//     // --------------------------------------
+
+//     const { company_id, type_id, include_unavailable } = req.query;
+
+//     const whereClause = {};
+//     const roleFilter = await RBACFilterService.getLocationFilter(user);
+
+//     Object.assign(whereClause, roleFilter);
+
+//     if (user.role_id === 1 && company_id) {
+//       whereClause.company_id = BigInt(company_id);
+//     } else if (user.role_id === 2 && company_id) {
+//       whereClause.company_id = BigInt(company_id);
+//     } else {
+//       whereClause.company_id = company_id;
+//     }
+
+//     if (type_id) {
+//       whereClause.type_id = BigInt(type_id);
+//     }
+
+//     if (include_unavailable !== "true") {
+//       whereClause.OR = [{ status: true }, { status: null }];
+//     }
+
+//     // --- YOUR EXACT ORIGINAL DATE LOGIC ---
+//     const today = new Date();
+//     const startOfDay = new Date(
+//       today.getFullYear(),
+//       today.getMonth(),
+//       today.getDate(),
+//       0,
+//       0,
+//       0,
+//       0,
+//     );
+//     const endOfDay = new Date(
+//       today.getFullYear(),
+//       today.getMonth(),
+//       today.getDate(),
+//       23,
+//       59,
+//       59,
+//       999,
+//     );
+//     // --------------------------------------
+
+//     // --- NEW: GET TOTAL COUNT BEFORE FETCHING DATA ---
+//     const totalRecords = await prisma.locations.count({
+//       where: Object.keys(whereClause).length ? whereClause : undefined,
+//     });
+//     // -------------------------------------------------
+
+//     const allLocations = await prisma.locations.findMany({
+//       where: Object.keys(whereClause).length ? whereClause : undefined,
+      
+//       // --- NEW: ADD SKIP AND TAKE TO PRISMA QUERY ---
+//       skip: skip,
+//       take: limit,
+//       // ----------------------------------------------
+      
+//       include: {
+//         hygiene_scores: {
+//           where: {
+//             created_at: {
+//               gte: startOfDay,
+//               lte: endOfDay,
+//             },
+//           },
+//           select: {
+//             score: true,
+//             created_at: true,
+//           },
+//           orderBy: {
+//             created_at: "desc",
+//           },
+//           take: 1, 
+//         },
+//         cleaner_reviews: {
+//           select: {
+//             score: true,
+//           },
+//         },
+//         location_types: {
+//           select: {
+//             id: true,
+//             name: true,
+//           },
+//         },
+//         facility_companies: {
+//           select: {
+//             id: true,
+//             name: true,
+//           },
+//         },
+
+//         cleaner_assignments: {
+//           where: {
+//             deleted_at: null,
+//             cleaner_user: {
+//               role_id: 5, // Only cleaners
+//             },
+//           },
+//           select: {
+//             id: true,
+//             status: true,
+//             assigned_on: true,
+//             cleaner_user: {
+//               select: {
+//                 id: true,
+//                 name: true,
+//                 email: true,
+//                 phone: true,
+//               },
+//             },
+//           },
+//           orderBy: {
+//             assigned_on: "desc",
+//           },
+//         },
+//       },
+//       orderBy: {
+//         created_at: "desc",
+//       },
+//     });
+
+//     // --- YOUR EXACT ORIGINAL MAPPING LOGIC ---
+//     const result = allLocations.map((loc) => {
+//       const hygieneScores = loc.cleaner_reviews.map((hs) => Number(hs.score));
+//       const ratingCount = hygieneScores.length;
+
+//       let averageRating = null;
+//       if (ratingCount > 0) {
+//         const sumOfScores = hygieneScores.reduce(
+//           (sum, score) => sum + score,
+//           0,
+//         );
+//         averageRating = sumOfScores / ratingCount;
+//       }
+
+//       const currentScore =
+//         loc.hygiene_scores.length > 0
+//           ? Number(loc.hygiene_scores[0].score)
+//           : null;
+
+//       return {
+//         ...loc,
+//         id: loc.id.toString(),
+//         parent_id: loc.parent_id?.toString() || null,
+//         company_id: loc.company_id?.toString() || null,
+//         type_id: loc.type_id?.toString() || null,
+//         facility_company_id: loc?.facility_company_id?.toString() || null,
+//         images: loc.images || [],
+//         averageRating: averageRating
+//           ? parseFloat(averageRating.toFixed(2))
+//           : null,
+//         ratingCount,
+//         currentScore: currentScore,
+//         hygiene_scores: undefined,
+//         location_types: {
+//           ...loc.location_types,
+//           id: loc?.location_types?.id?.toString(),
+//         },
+//         facility_companies: loc.facility_companies
+//           ? {
+//             ...loc.facility_companies,
+//             id: loc.facility_companies.id.toString(),
+//           }
+//           : null,
+//         cleaner_assignments: loc.cleaner_assignments.map((assignment) => ({
+//           ...assignment,
+//           id: assignment.id.toString(),
+//           cleaner_user: {
+//             ...assignment.cleaner_user,
+//             id: assignment.cleaner_user.id.toString(),
+//           },
+//         })),
+//       };
+//     });
+//     // -----------------------------------------
+
+//     // --- NEW: RETURN BOTH DATA AND PAGINATION METADATA ---
+//     res.json({
+//       data: result,
+//       pagination: {
+//         total: totalRecords,
+//         page: page,
+//         limit: limit,
+//         last_page: Math.ceil(totalRecords / limit) || 1
+//       }
+//     });
+//     // -----------------------------------------------------
+
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).send("Error fetching toilet locations");
+//   }
+// };
+
+export const getMapToilets = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) return res.status(401).json({ message: "Unauthorized" });
+
+    const { company_id, type_id } = req.query;
+    const whereClause = await RBACFilterService.getLocationFilter(user);
+
+    // Apply filters
+    if (company_id) whereClause.company_id = BigInt(company_id);
+    if (type_id) whereClause.type_id = BigInt(type_id);
+    whereClause.deleted_at = null;
+    whereClause.OR = [{ status: true }, { status: null }];
+
+    // Highly optimized query - ONLY selecting fields needed for the Map/Popup
+    const locations = await prisma.locations.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        name: true,
+        latitude: true,
+        longitude: true,
+        images: true,
+        options: true, // Assuming this contains amenities like isPaid, is24Hours, etc.
+        cleaner_reviews: { select: { score: true } }, // Used for average rating
+        created_at: true
+      },
+    });
+
+    // Minimal transformation for speed
+    const result = locations.map((loc) => {
+      const scores = loc.cleaner_reviews.map((r) => Number(r.score));
+      const avg = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
+
+      return {
+        id: loc.id.toString(),
+        name: loc.name,
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        images: loc.images || [],
+        options: loc.options || {},
+        averageRating: parseFloat(avg.toFixed(1)),
+        ratingCount: scores.length,
+        created_at: loc.created_at
+      };
+    });
+
+    res.status(200).json(result);
+  } catch (err) {
+    console.error("Map fetch error:", err);
+    res.status(500).send("Error fetching map data");
+  }
+};
+
+export const getAllToilets = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 15;
+    const skip = (page - 1) * limit;
+
+    const { company_id, type_id, include_unavailable } = req.query;
+
+    const whereClause = {};
+    const roleFilter = await RBACFilterService.getLocationFilter(user);
+    Object.assign(whereClause, roleFilter);
+
+    if (user.role_id === 1 && company_id) {
+      whereClause.company_id = BigInt(company_id);
+    } else if (user.role_id === 2 && company_id) {
+      whereClause.company_id = BigInt(company_id);
+    } else {
+      whereClause.company_id = company_id;
+    }
+
+    if (type_id) {
+      whereClause.type_id = BigInt(type_id);
+    }
+
+    if (include_unavailable !== "true") {
+      whereClause.OR = [{ status: true }, { status: null }];
+    }
+
+    whereClause.deleted_at = null;
+
+    const today = new Date();
+    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+
+    const totalRecords = await prisma.locations.count({
+      where: Object.keys(whereClause).length ? whereClause : undefined,
+    });
+
+    // --- HIGHLY OPTIMIZED PRISMA QUERY ---
+    const allLocations = await prisma.locations.findMany({
+      where: Object.keys(whereClause).length ? whereClause : undefined,
+      skip: skip,
+      take: limit,
+      
+      // Use 'select' instead of 'include' to strip out heavy unused columns
+      select: {
+        id: true,
+        name: true,
+        created_at: true,
+        status: true,
+        latitude: true,               // Needed for map button
+        longitude: true,              // Needed for map button
+        type_id: true,                // Needed for frontend filtering
+        facility_company_id: true,    // Needed for frontend filtering
+        
+        location_types: {
+          select: { id: true, name: true },
+        },
+        facility_companies: {
+          select: { id: true, name: true },
+        },
+        cleaner_reviews: {
+          select: { score: true },
+        },
+        hygiene_scores: {
+          where: {
+            created_at: { gte: startOfDay, lte: endOfDay },
+          },
+          select: { score: true },
+          orderBy: { created_at: "desc" },
+          take: 1, 
+        },
+        cleaner_assignments: {
+          where: {
+            deleted_at: null,
+            cleaner_user: { role_id: 5 }, 
+          },
+          select: {
+            id: true,
+            // Only fetching the name, no need for phone/email on the list page
+            cleaner_user: {
+              select: { id: true, name: true },
+            },
+          },
+          orderBy: { assigned_on: "desc" },
+        },
+      },
+      orderBy: {
+        created_at: "desc",
+      },
+    });
+
+    // --- LEAN DATA MAPPING ---
+    const result = allLocations.map((loc) => {
+      // Calculate Average Rating
+      const hygieneScores = loc.cleaner_reviews.map((hs) => Number(hs.score));
+      const ratingCount = hygieneScores.length;
+      let averageRating = null;
+      
+      if (ratingCount > 0) {
+        const sumOfScores = hygieneScores.reduce((sum, score) => sum + score, 0);
+        averageRating = sumOfScores / ratingCount;
+      }
+
+      // Get Current Score
+      const currentScore = loc.hygiene_scores.length > 0 ? Number(loc.hygiene_scores[0].score) : null;
+
+      // Return only what the UI needs
+      return {
+        id: loc.id.toString(),
+        name: loc.name,
+        created_at: loc.created_at,
+        status: loc.status,
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        type_id: loc.type_id?.toString() || null,
+        facility_company_id: loc.facility_company_id?.toString() || null,
+        averageRating: averageRating ? parseFloat(averageRating.toFixed(2)) : null,
+        currentScore: currentScore,
+        
+        location_types: loc.location_types ? { 
+          id: loc.location_types.id.toString(), 
+          name: loc.location_types.name 
+        } : null,
+        
+        facility_companies: loc.facility_companies ? { 
+          id: loc.facility_companies.id.toString(), 
+          name: loc.facility_companies.name 
+        } : null,
+        
+        cleaner_assignments: loc.cleaner_assignments.map((assignment) => ({
+          id: assignment.id.toString(),
+          cleaner_user: assignment.cleaner_user ? {
+            id: assignment.cleaner_user.id.toString(),
+            name: assignment.cleaner_user.name
+          } : null,
+        })),
+      };
+    });
+
+    res.json({
+      data: result,
+      pagination: {
+        total: totalRecords,
+        page: page,
+        limit: limit,
+        last_page: Math.ceil(totalRecords / limit) || 1
+      }
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Error fetching toilet locations");
+  }
+};
 
 export const toggleStatusToilet = async (req, res) => {
   const { id } = req.params;
