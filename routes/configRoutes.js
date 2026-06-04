@@ -1,50 +1,39 @@
-// import express from "express";
-
-// import {
-//   getConfigurationById,
-//   getConfigurationByName,
-// } from "../controller/configController.js";
-
-// const configRouter = express.Router();
-
-// configRouter.get("/configurations/:name", getConfigurationByName);
-// configRouter.get("/configurations/id/:id", getConfigurationById);
-
-// export default configRouter;
-
-
-// routes/configurationRoutes.js
-import express from 'express';
+import express from "express";
 import {
   getAllConfigurations,
   getConfigurationById,
   getConfigurationByName,
-  // createConfiguration,
-  // updateConfiguration,
-  // deleteConfiguration,
-  // toggleConfigurationStatus,
-  // duplicateConfiguration,
-  // getConfigurationTemplates
-} from "../controller/configController.js"
+  updateConfiguration,
+  deleteConfiguration,
+  toggleConfigurationStatus,
+  duplicateConfiguration,
+  // --- New Dynamic Configuration System Handlers ---
+  getDynamicModules,
+  getConfigByRouteName,
+  updateConfigByRouteName,
+  getLocationSchema,
+} from "../controller/configController.js";
 
 const router = express.Router();
 
-// GET routes
-router.get('/', getAllConfigurations);                    // GET /api/configurations
-router.get('/:name', getConfigurationByName);             // GET /api/configurations/Toilet_Features
-router.get('/id/:id', getConfigurationById);              // GET /api/configurations/id/1
-// Add to your existing configurationRoutes.js
-// router.get('/templates', getConfigurationTemplates);  // Add this line
+// 1. Dynamic Framework Discovery Route
+router.get("/modules", getDynamicModules);
 
-// POST routes
-// router.post('/', createConfiguration);                    // POST /api/configurations
-// router.post('/:id/duplicate', duplicateConfiguration);    // POST /api/configurations/1/duplicate
+// 2. Automated Construction Schema for Client Context
+router.get("/location-schema", getLocationSchema);
 
-// PATCH routes
-// router.patch('/:id', updateConfiguration);                // PATCH /api/configurations/1
-// router.patch('/:id/toggle-status', toggleConfigurationStatus); // PATCH /api/configurations/1/toggle-status
+// 3. Tenancy-Aware Lookup Route by Name Specifier
+router.get("/name/:name", getConfigByRouteName);
 
-// DELETE routes
-// router.delete('/:id', deleteConfiguration);               // DELETE /api/configurations/1
+// 4. Overwrite Update Route by Name Specifier
+router.put("/name/:name", updateConfigByRouteName);
+
+// Fallback/Legacy CRUD Mappings
+router.get("/", getAllConfigurations);
+router.get("/id/:id", getConfigurationById);
+router.patch("/:id", updateConfiguration);
+router.delete("/:id", deleteConfiguration);
+router.patch("/:id/toggle-status", toggleConfigurationStatus);
+router.post("/:id/duplicate", duplicateConfiguration);
 
 export default router;
