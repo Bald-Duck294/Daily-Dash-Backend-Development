@@ -476,12 +476,12 @@ const validateAndFormatSchedule = (scheduleInput) => {
 
 //     const allLocations = await prisma.locations.findMany({
 //       where: Object.keys(whereClause).length ? whereClause : undefined,
-      
+
 //       // --- NEW: ADD SKIP AND TAKE TO PRISMA QUERY ---
 //       skip: skip,
 //       take: limit,
 //       // ----------------------------------------------
-      
+
 //       include: {
 //         hygiene_scores: {
 //           where: {
@@ -497,7 +497,7 @@ const validateAndFormatSchedule = (scheduleInput) => {
 //           orderBy: {
 //             created_at: "desc",
 //           },
-//           take: 1, 
+//           take: 1,
 //         },
 //         cleaner_reviews: {
 //           select: {
@@ -645,14 +645,17 @@ export const getMapToilets = async (req, res) => {
         images: true,
         options: true, // Assuming this contains amenities like isPaid, is24Hours, etc.
         cleaner_reviews: { select: { score: true } }, // Used for average rating
-        created_at: true
+        created_at: true,
       },
     });
 
     // Minimal transformation for speed
     const result = locations.map((loc) => {
       const scores = loc.cleaner_reviews.map((r) => Number(r.score));
-      const avg = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
+      const avg =
+        scores.length > 0
+          ? scores.reduce((a, b) => a + b, 0) / scores.length
+          : 0;
 
       return {
         id: loc.id.toString(),
@@ -663,7 +666,7 @@ export const getMapToilets = async (req, res) => {
         options: loc.options || {},
         averageRating: parseFloat(avg.toFixed(1)),
         ratingCount: scores.length,
-        created_at: loc.created_at
+        created_at: loc.created_at,
       };
     });
 
@@ -710,8 +713,24 @@ export const getAllToilets = async (req, res) => {
     whereClause.deleted_at = null;
 
     const today = new Date();
-    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
-    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+    const startOfDay = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate(),
+      0,
+      0,
+      0,
+      0,
+    );
+    const endOfDay = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate(),
+      23,
+      59,
+      59,
+      999,
+    );
 
     const totalRecords = await prisma.locations.count({
       where: Object.keys(whereClause).length ? whereClause : undefined,
@@ -722,18 +741,18 @@ export const getAllToilets = async (req, res) => {
       where: Object.keys(whereClause).length ? whereClause : undefined,
       skip: skip,
       take: limit,
-      
+
       // Use 'select' instead of 'include' to strip out heavy unused columns
       select: {
         id: true,
         name: true,
         created_at: true,
         status: true,
-        latitude: true,               // Needed for map button
-        longitude: true,              // Needed for map button
-        type_id: true,                // Needed for frontend filtering
-        facility_company_id: true,    // Needed for frontend filtering
-        
+        latitude: true, // Needed for map button
+        longitude: true, // Needed for map button
+        type_id: true, // Needed for frontend filtering
+        facility_company_id: true, // Needed for frontend filtering
+
         location_types: {
           select: { id: true, name: true },
         },
@@ -749,12 +768,12 @@ export const getAllToilets = async (req, res) => {
           },
           select: { score: true },
           orderBy: { created_at: "desc" },
-          take: 1, 
+          take: 1,
         },
         cleaner_assignments: {
           where: {
             deleted_at: null,
-            cleaner_user: { role_id: 5 }, 
+            cleaner_user: { role_id: 5 },
           },
           select: {
             id: true,
@@ -777,14 +796,20 @@ export const getAllToilets = async (req, res) => {
       const hygieneScores = loc.cleaner_reviews.map((hs) => Number(hs.score));
       const ratingCount = hygieneScores.length;
       let averageRating = null;
-      
+
       if (ratingCount > 0) {
-        const sumOfScores = hygieneScores.reduce((sum, score) => sum + score, 0);
+        const sumOfScores = hygieneScores.reduce(
+          (sum, score) => sum + score,
+          0,
+        );
         averageRating = sumOfScores / ratingCount;
       }
 
       // Get Current Score
-      const currentScore = loc.hygiene_scores.length > 0 ? Number(loc.hygiene_scores[0].score) : null;
+      const currentScore =
+        loc.hygiene_scores.length > 0
+          ? Number(loc.hygiene_scores[0].score)
+          : null;
 
       // Return only what the UI needs
       return {
@@ -796,25 +821,33 @@ export const getAllToilets = async (req, res) => {
         longitude: loc.longitude,
         type_id: loc.type_id?.toString() || null,
         facility_company_id: loc.facility_company_id?.toString() || null,
-        averageRating: averageRating ? parseFloat(averageRating.toFixed(2)) : null,
+        averageRating: averageRating
+          ? parseFloat(averageRating.toFixed(2))
+          : null,
         currentScore: currentScore,
-        
-        location_types: loc.location_types ? { 
-          id: loc.location_types.id.toString(), 
-          name: loc.location_types.name 
-        } : null,
-        
-        facility_companies: loc.facility_companies ? { 
-          id: loc.facility_companies.id.toString(), 
-          name: loc.facility_companies.name 
-        } : null,
-        
+
+        location_types: loc.location_types
+          ? {
+              id: loc.location_types.id.toString(),
+              name: loc.location_types.name,
+            }
+          : null,
+
+        facility_companies: loc.facility_companies
+          ? {
+              id: loc.facility_companies.id.toString(),
+              name: loc.facility_companies.name,
+            }
+          : null,
+
         cleaner_assignments: loc.cleaner_assignments.map((assignment) => ({
           id: assignment.id.toString(),
-          cleaner_user: assignment.cleaner_user ? {
-            id: assignment.cleaner_user.id.toString(),
-            name: assignment.cleaner_user.name
-          } : null,
+          cleaner_user: assignment.cleaner_user
+            ? {
+                id: assignment.cleaner_user.id.toString(),
+                name: assignment.cleaner_user.name,
+              }
+            : null,
         })),
       };
     });
@@ -825,10 +858,9 @@ export const getAllToilets = async (req, res) => {
         total: totalRecords,
         page: page,
         limit: limit,
-        last_page: Math.ceil(totalRecords / limit) || 1
-      }
+        last_page: Math.ceil(totalRecords / limit) || 1,
+      },
     });
-
   } catch (err) {
     console.error(err);
     res.status(500).send("Error fetching toilet locations");
@@ -864,12 +896,12 @@ export const toggleStatusToilet = async (req, res) => {
       // 2. If disabling → make all assignments unassigned
       !newStatus
         ? prisma.cleaner_assignments.updateMany({
-          where: {
-            location_id: BigInt(id),
-            deleted_at: null,
-          },
-          data: { status: "unassigned" },
-        })
+            where: {
+              location_id: BigInt(id),
+              deleted_at: null,
+            },
+            data: { status: "unassigned" },
+          })
         : prisma.cleaner_assignments.findMany(), // dummy
     ]);
 
@@ -885,7 +917,6 @@ export const toggleStatusToilet = async (req, res) => {
         parent_id: updatedToilet.parent_id?.toString() ?? null,
         facility_company_id:
           updatedToilet?.facility_company_id?.toString() ?? null,
-
       },
     });
   } catch (err) {
@@ -1288,7 +1319,6 @@ export const createLocation = async (req, res) => {
 
     console.log("Parsed coordinates:", { parsedLatitude, parsedLongitude });
 
-
     // 🔥 Handle Schedule
     let finalSchedule = null;
 
@@ -1404,26 +1434,26 @@ export const createLocation = async (req, res) => {
       images: newLocation.images || [],
       location_types: newLocation.location_types
         ? {
-          ...newLocation.location_types,
-          id: newLocation.location_types.id.toString(),
-          parent_id: newLocation.location_types.parent_id?.toString() || null,
-          company_id:
-            newLocation.location_types.company_id?.toString() || null,
-        }
+            ...newLocation.location_types,
+            id: newLocation.location_types.id.toString(),
+            parent_id: newLocation.location_types.parent_id?.toString() || null,
+            company_id:
+              newLocation.location_types.company_id?.toString() || null,
+          }
         : null,
       companies: newLocation.companies
         ? {
-          ...newLocation.companies,
-          id: newLocation.companies.id.toString(),
-        }
+            ...newLocation.companies,
+            id: newLocation.companies.id.toString(),
+          }
         : null,
       facility_companies: newLocation.facility_companies
         ? {
-          ...newLocation.facility_companies,
-          id: newLocation.facility_companies.id.toString(),
-          company_id:
-            newLocation.facility_companies.company_id?.toString() || null,
-        }
+            ...newLocation.facility_companies,
+            id: newLocation.facility_companies.id.toString(),
+            company_id:
+              newLocation.facility_companies.company_id?.toString() || null,
+          }
         : null,
     };
 
@@ -1477,10 +1507,21 @@ export const updateLocationById = async (req, res) => {
     let finalImages = existingLocation.images || [];
 
     if (newImageUrls.length > 0) {
-      // Add new images to existing ones
-      finalImages = [...finalImages, ...newImageUrls];
-    }
+      // ✅ NEW: Intercept the cover image flag from the frontend
+      if (
+        updateData.isNewCoverIncluded === "true" ||
+        updateData.isNewCoverIncluded === true
+      ) {
+        // Extract the very first uploaded image (which the frontend guaranteed is the cover)
+        const newCoverUrl = newImageUrls.shift();
 
+        // Construct the array: [New Cover] -> [All Existing Images] -> [New Gallery Images]
+        finalImages = [newCoverUrl, ...finalImages, ...newImageUrls];
+      } else {
+        // Normal behavior: Just append new gallery photos to the end
+        finalImages = [...finalImages, ...newImageUrls];
+      }
+    }
     //  If replace_images is true, replace all images
     if (
       updateData.replace_images === "true" ||
@@ -1491,8 +1532,8 @@ export const updateLocationById = async (req, res) => {
 
     const parsedNoOfPhotos =
       updateData.no_of_photos !== undefined &&
-        updateData.no_of_photos !== null &&
-        updateData.no_of_photos !== ""
+      updateData.no_of_photos !== null &&
+      updateData.no_of_photos !== ""
         ? parseInt(updateData?.no_of_photos, 10)
         : null;
     //  Handle options properly (same as create)
@@ -1596,7 +1637,6 @@ export const updateLocationById = async (req, res) => {
 
     console.log("Final usage_category for update:", finalUsageCategory);
 
-
     let finalSchedule = existingLocation.schedule || null;
 
     if (updateData.schedule !== undefined) {
@@ -1618,8 +1658,7 @@ export const updateLocationById = async (req, res) => {
 
     if (updateData.is_public !== undefined) {
       finalIsPublic =
-        updateData.is_public === "true" ||
-        updateData.is_public === true;
+        updateData.is_public === "true" || updateData.is_public === true;
     }
 
     const dataToUpdate = {
@@ -1662,7 +1701,6 @@ export const updateLocationById = async (req, res) => {
       no_of_photos: parsedNoOfPhotos || existingLocation?.no_of_photos,
       schedule: finalSchedule,
       is_public: finalIsPublic,
-
     };
 
     // Update parent_id and type_id if provided
@@ -1845,8 +1883,6 @@ export const getAllToiletsForWeb = async (req, res) => {
       is_public: true,
     };
 
-
-
     // STEP 2: Company filter
     if (company_id) {
       whereClause.company_id = BigInt(company_id);
@@ -1984,15 +2020,15 @@ export const getAllToiletsForWeb = async (req, res) => {
         hygiene_scores: undefined,
         location_types: loc.location_types
           ? {
-            ...loc.location_types,
-            id: loc.location_types.id.toString(),
-          }
+              ...loc.location_types,
+              id: loc.location_types.id.toString(),
+            }
           : null,
         facility_companies: loc.facility_companies
           ? {
-            ...loc.facility_companies,
-            id: loc.facility_companies.id.toString(),
-          }
+              ...loc.facility_companies,
+              id: loc.facility_companies.id.toString(),
+            }
           : null,
         cleaner_assignments: loc.cleaner_assignments.map((a) => ({
           ...a,
