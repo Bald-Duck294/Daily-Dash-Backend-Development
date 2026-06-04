@@ -14,32 +14,36 @@ export const getLocationsForDropdown = async (req, res) => {
     const { company_id, type_id, facility_company_id } = req.query;
     const whereClause = {};
 
-    // 1. Apply Role-Based Access Control (Crucial for your multi-tenant setup)
+    // 1. Apply Role-Based Access Control
     const roleFilter = await RBACFilterService.getLocationFilter(user);
     Object.assign(whereClause, roleFilter);
 
     // 2. Superadmin/Admin Company Overrides
-    if ((user.role_id === 1 || user.role_id === 2) && company_id) {
+    // ✅ FIX: Explicitly check that company_id is NOT the string "all" before using BigInt()
+    const isValidCompanyId = company_id && company_id !== "all" && company_id !== "null";
+
+    if ((user.role_id === 1 || user.role_id === 2) && isValidCompanyId) {
       whereClause.company_id = BigInt(company_id);
-    } else if (company_id) {
-      whereClause.company_id = BigInt(company_id); // Assuming standard users pass this too
+    } else if (isValidCompanyId) {
+      whereClause.company_id = BigInt(company_id); 
     }
 
     // 3. Optional Filters (Type and Facility)
-    if (type_id) {
+    // Also added safety checks here just in case "all" gets passed to these in the future
+    if (type_id && type_id !== "all") {
       whereClause.type_id = BigInt(type_id);
     }
-    if (facility_company_id) {
+    if (facility_company_id && facility_company_id !== "all") {
       whereClause.facility_company_id = BigInt(facility_company_id);
     }
 
-    // 4. Exclude soft-deleted records (Prevents deleted locations from showing in dropdowns)
+    // 4. Exclude soft-deleted records
     whereClause.deleted_at = null;
 
-    // 5. Force Active Only (Dropdowns shouldn't show inactive/unavailable locations)
+    // 5. Force Active Only
     whereClause.OR = [{ status: true }, { status: null }];
 
-    // 6. Highly Optimized Prisma Query (Only grabbing id and name)
+    // 6. Highly Optimized Prisma Query
     const locations = await prisma.locations.findMany({
       where: Object.keys(whereClause).length ? whereClause : undefined,
       select: {
@@ -47,11 +51,11 @@ export const getLocationsForDropdown = async (req, res) => {
         name: true,
       },
       orderBy: {
-        name: 'asc', // Alphabetical order is best for UI dropdowns
+        name: 'asc',
       }
     });
 
-    // 7. Format BigInt to String for JSON serialization
+    // 7. Format BigInt to String
     const formattedLocations = locations.map(loc => ({
       id: loc.id.toString(),
       name: loc.name
@@ -143,3 +147,34 @@ export async function getUsersForDropdown(req, res) {
     });
   }
 }
+
+export const getCompaniesForDropdown = async (req, res) => {
+  try {
+    // CHANGE THIS LINE to match your exact Prisma model name
+    const companies = await prisma.companies.findMany({
+      select: {
+        id: true,
+        name: true,
+      },
+      orderBy: {
+        name: "asc", 
+      },
+    });
+
+    const formattedCompanies = companies.map((company) => ({
+      id: company.id.toString(),
+      name: company.name,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      data: formattedCompanies,
+    });
+  } catch (error) {
+    console.error("Error fetching companies for dropdown:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error fetching dropdown companies.",
+    });
+  }
+};
