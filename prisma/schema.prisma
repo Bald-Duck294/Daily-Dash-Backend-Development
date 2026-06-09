@@ -417,3 +417,12 @@ model service_request {
   request_type String
   created_at   DateTime @default(now())
 }
+
+model odor_readings {
+  id         Int       @id @default(autoincrement())
+  device_id  String?   @db.VarChar(50)
+  nh3_value  Int?
+  status     String?   @db.VarChar(20)
+  fan_status String?   @db.VarChar(10)
+  created_at DateTime? @default(now()) @db.Timestamp(6)
+}

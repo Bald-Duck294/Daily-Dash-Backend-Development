@@ -23,7 +23,10 @@ import fcmRoutes from "./routes/fcmRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import serviceReqRouter from "./routes/serviceRequestRoute.js";
 import shiftAssign_router from "./routes/shiftAssignRoutes.js";
-import dropdownlist_router from "./routes/dropdownlist.route.js"
+import dropdownlist_router from "./routes/dropdownlist.route.js";
+import getPhotoRoutes from "./routes/photoRoute.js";
+import iotRoutes from "./routes/iotRoutes.js";
+
 dotenv.config();
 
 const app = express();
@@ -48,21 +51,6 @@ const allowedOrigins = [
   "https://safai-index-livid.vercel.app",
 ];
 
-// app.use(
-//   cors({
-//     origin: function (origin, callback) {
-//       if (!origin || allowedOrigins.includes(origin)) {
-//         callback(null, true);
-//       } else {
-//         callback(new Error("Not allowed by CORS: " + origin));
-//       }
-//     },
-//     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-//     allowedHeaders: ["Content-Type", "Authorization"],
-//     credentials: true,
-//   })
-// );
-
 app.use(
   cors({
     origin: "*",
@@ -72,45 +60,24 @@ app.use(
   }),
 );
 
-// app.use(
-//   cors({
-//     origin: function (origin, callback) {
-//       // Allow requests with no origin (like mobile apps or Postman)
-//       if (!origin) return callback(null, true);
-
-//       if (allowedOrigins.includes(origin)) {
-//         callback(null, true);
-//       } else {
-//         console.log("CORS blocked origin:", origin); // Add logging
-//         callback(new Error("Not allowed by CORS: " + origin));
-//       }
-//     },
-//     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-//     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"], // Add this
-//     credentials: true,
-//   })
-// );
-
-// ✅ Handle preflight for all routes
-// app.options("*", cors());
-
 // Routes
+app.use("/api/iot", iotRoutes);
 
-app.use("/api", loginRoute);
+app.use("/api/auth", loginRoute);
 app.use("/api/fcm", fcmRoutes);
-app.use("/api", registered_users_router);
 app.use("/api/reports", reportRouter);
 app.use("/api/facility-companies", facility_company_router);
 app.use("/api/service-req", serviceReqRouter);
-app.use("/api/dropdown-list", dropdownlist_router );
+app.use("/api/dropdown-list", dropdownlist_router);
+
 // app.use("/api", verifyToken);
 
 app.use("/api/locations", getLocationRoutes);
 // app.use("/api", getLocationRoutes);
-app.use("/api", location_types_router);
+app.use("/api/location-types", location_types_router);
 app.use("/api/configurations", configRouter);
 app.use("/api/reviews", reviewRoutes);
-app.use("/api", clen_assign_router);
+app.use("/api/assignments", clen_assign_router);
 app.use("/api/cleaner-reviews", clean_review_Router);
 app.use("/api/users", userRouter);
 app.use("/api/companies", companyRouter);
@@ -118,7 +85,9 @@ app.use("/api/roles", roleRouter);
 app.use("/api/shifts", shift_router);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/shifts-assign", shiftAssign_router);
+app.use("/api/photo", getPhotoRoutes);
 app.use("/uploads", express.static("uploads"));
+// app.use("/api", registered_users_router);
 
 app.use((err, req, res, next) => {
   // Set CORS headers even for errors
