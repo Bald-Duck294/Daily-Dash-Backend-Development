@@ -12,25 +12,32 @@ import {
   getAssignmentsByCleanerId,
 } from "../controller/clenAssignController.js";
 
+// Import your authentication and RBAC middlewares
 import { verifyToken } from "../middlewares/authMiddleware.js";
+import { requireLocationAccess } from "../middlewares/requireLocationAccess.js";
+
 const clen_assign_router = express.Router();
 
-// CRUD routes
-// ✅ Fixed routing structure
-clen_assign_router.get("/", verifyToken, getAllAssignments); // Get all assignments
-clen_assign_router.get("/cleaner/:id", getAssignmentById); // Get single assignment by ID
-clen_assign_router.get("/:cleaner_user_id", getAssignmentByCleanerUserId); // Get by cleaner
-clen_assign_router.post("/", createAssignment); // Create new assignment
-clen_assign_router.post("/:id", updateAssignment); // Update assignment (use PUT)
-clen_assign_router.delete("/:id", deleteAssignment);
-clen_assign_router.post("/location/create", createAssignmentsForLocation); // Get all assignments
-// Delete assignment
-clen_assign_router.get("/location/:location_id", getAssignmentsByLocation);
-clen_assign_router.get(
-  "/cleaner-id/:cleaner_user_id",
-  getAssignmentsByCleanerId,
-);
+// Apply token verification globally to all assignment routes for security
+clen_assign_router.use(verifyToken);
 
-// Delete
+// --- 1. Global / List Routes ---
+// Gets all assignments (populates req.authorizedLocationIds via middleware)
+clen_assign_router.get("/", requireLocationAccess, getAllAssignments); 
+
+// --- 2. Location Scoped Routes ---
+// SECURED: Automatically checks if the logged-in user owns this :location_id
+clen_assign_router.get("/location/:location_id", requireLocationAccess, getAssignmentsByLocation);
+
+// --- 3. Management & Creation Routes ---
+clen_assign_router.post("/", createAssignment); 
+clen_assign_router.post("/location/create", createAssignmentsForLocation); 
+clen_assign_router.post("/:id", updateAssignment); 
+clen_assign_router.delete("/:id", deleteAssignment);
+
+// --- 4. User Scoped Routes ---
+clen_assign_router.get("/cleaner/:id", getAssignmentById); 
+clen_assign_router.get("/:cleaner_user_id", getAssignmentByCleanerUserId); 
+clen_assign_router.get("/cleaner-id/:cleaner_user_id", getAssignmentsByCleanerId);
 
 export default clen_assign_router;

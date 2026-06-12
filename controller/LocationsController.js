@@ -677,6 +677,197 @@ export const getMapToilets = async (req, res) => {
   }
 };
 
+// export const getAllToilets = async (req, res) => {
+//   try {
+//     const user = req.user;
+//     if (!user) {
+//       return res.status(401).json({ message: "Unauthorized" });
+//     }
+
+//     const page = parseInt(req.query.page) || 1;
+//     const limit = parseInt(req.query.limit) || 15;
+//     const skip = (page - 1) * limit;
+
+//     const { company_id, type_id, include_unavailable } = req.query;
+
+//     const whereClause = {};
+//     const roleFilter = await RBACFilterService.getLocationFilter(user);
+//     Object.assign(whereClause, roleFilter);
+
+//     if (user.role_id === 1 && company_id) {
+//       whereClause.company_id = BigInt(company_id);
+//     } else if (user.role_id === 2 && company_id) {
+//       whereClause.company_id = BigInt(company_id);
+//     } else {
+//       whereClause.company_id = company_id;
+//     }
+
+//     if (type_id) {
+//       whereClause.type_id = BigInt(type_id);
+//     }
+
+//     if (include_unavailable !== "true") {
+//       whereClause.OR = [{ status: true }, { status: null }];
+//     }
+
+//     whereClause.deleted_at = null;
+
+//     const today = new Date();
+//     const startOfDay = new Date(
+//       today.getFullYear(),
+//       today.getMonth(),
+//       today.getDate(),
+//       0,
+//       0,
+//       0,
+//       0,
+//     );
+//     const endOfDay = new Date(
+//       today.getFullYear(),
+//       today.getMonth(),
+//       today.getDate(),
+//       23,
+//       59,
+//       59,
+//       999,
+//     );
+
+//     const totalRecords = await prisma.locations.count({
+//       where: Object.keys(whereClause).length ? whereClause : undefined,
+//     });
+
+//     // --- HIGHLY OPTIMIZED PRISMA QUERY ---
+//     const allLocations = await prisma.locations.findMany({
+//       where: Object.keys(whereClause).length ? whereClause : undefined,
+//       skip: skip,
+//       take: limit,
+
+//       // Use 'select' instead of 'include' to strip out heavy unused columns
+//       select: {
+//         id: true,
+//         name: true,
+//         created_at: true,
+//         status: true,
+//         latitude: true, // Needed for map button
+//         longitude: true, // Needed for map button
+//         type_id: true, // Needed for frontend filtering
+//         facility_company_id: true, // Needed for frontend filtering
+
+//         location_types: {
+//           select: { id: true, name: true },
+//         },
+//         facility_companies: {
+//           select: { id: true, name: true },
+//         },
+//         cleaner_reviews: {
+//           select: { score: true },
+//         },
+//         hygiene_scores: {
+//           where: {
+//             created_at: { gte: startOfDay, lte: endOfDay },
+//           },
+//           select: { score: true },
+//           orderBy: { created_at: "desc" },
+//           take: 1,
+//         },
+//         cleaner_assignments: {
+//           where: {
+//             deleted_at: null,
+//             cleaner_user: { role_id: 5 },
+//           },
+//           select: {
+//             id: true,
+//             // Only fetching the name, no need for phone/email on the list page
+//             cleaner_user: {
+//               select: { id: true, name: true },
+//             },
+//           },
+//           orderBy: { assigned_on: "desc" },
+//         },
+//       },
+//       orderBy: {
+//         created_at: "desc",
+//       },
+//     });
+
+//     // --- LEAN DATA MAPPING ---
+//     const result = allLocations.map((loc) => {
+//       // Calculate Average Rating
+//       const hygieneScores = loc.cleaner_reviews.map((hs) => Number(hs.score));
+//       const ratingCount = hygieneScores.length;
+//       let averageRating = null;
+
+//       if (ratingCount > 0) {
+//         const sumOfScores = hygieneScores.reduce(
+//           (sum, score) => sum + score,
+//           0,
+//         );
+//         averageRating = sumOfScores / ratingCount;
+//       }
+
+//       // Get Current Score
+//       const currentScore =
+//         loc.hygiene_scores.length > 0
+//           ? Number(loc.hygiene_scores[0].score)
+//           : null;
+
+//       // Return only what the UI needs
+//       return {
+//         id: loc.id.toString(),
+//         name: loc.name,
+//         created_at: loc.created_at,
+//         status: loc.status,
+//         latitude: loc.latitude,
+//         longitude: loc.longitude,
+//         type_id: loc.type_id?.toString() || null,
+//         facility_company_id: loc.facility_company_id?.toString() || null,
+//         averageRating: averageRating
+//           ? parseFloat(averageRating.toFixed(2))
+//           : null,
+//         currentScore: currentScore,
+
+//         location_types: loc.location_types
+//           ? {
+//               id: loc.location_types.id.toString(),
+//               name: loc.location_types.name,
+//             }
+//           : null,
+
+//         facility_companies: loc.facility_companies
+//           ? {
+//               id: loc.facility_companies.id.toString(),
+//               name: loc.facility_companies.name,
+//             }
+//           : null,
+
+//         cleaner_assignments: loc.cleaner_assignments.map((assignment) => ({
+//           id: assignment.id.toString(),
+//           cleaner_user: assignment.cleaner_user
+//             ? {
+//                 id: assignment.cleaner_user.id.toString(),
+//                 name: assignment.cleaner_user.name,
+//               }
+//             : null,
+//         })),
+//       };
+//     });
+
+//     res.json({
+//       data: result,
+//       pagination: {
+//         total: totalRecords,
+//         page: page,
+//         limit: limit,
+//         last_page: Math.ceil(totalRecords / limit) || 1,
+//       },
+//     });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).send("Error fetching toilet locations");
+//   }
+// };
+
+
 export const getAllToilets = async (req, res) => {
   try {
     const user = req.user;
@@ -691,21 +882,81 @@ export const getAllToilets = async (req, res) => {
     const { company_id, type_id, include_unavailable } = req.query;
 
     const whereClause = {};
+    
+    // 1. Apply default RBAC filter
+    // Note: Ensure your RBACFilterService isn't overriding this for Zonal Admins incorrectly
     const roleFilter = await RBACFilterService.getLocationFilter(user);
-    Object.assign(whereClause, roleFilter);
+    if (roleFilter) {
+      Object.assign(whereClause, roleFilter);
+    }
 
+    // =======================================================
+    // 🔥 2. ZONAL ADMIN HIERARCHY FETCH (Based on type_id) 🔥
+    // =======================================================
+    if (user.role_id === 6) {
+      // A. Find all zones explicitly assigned to this Zonal Admin
+      const zonalAssignments = await prisma.cleaner_assignments.findMany({
+        where: {
+          cleaner_user_id: BigInt(user.id),
+          status: 'assigned',
+          type_id: { not: null }
+        },
+        select: { type_id: true }
+      });
+
+      const assignedZoneIds = zonalAssignments.map(a => a.type_id);
+
+      // If they are not assigned to any zones, return an empty list immediately
+      if (assignedZoneIds.length === 0) {
+        return res.json({
+          data: [],
+          pagination: { total: 0, page, limit, last_page: 1 }
+        });
+      }
+
+      // B. Find any sub-zones (Level 2) that belong to these assigned zones
+      const subZones = await prisma.location_types.findMany({
+        where: { parent_id: { in: assignedZoneIds } },
+        select: { id: true }
+      });
+
+      // C. Combine Level 1 (Assigned) and Level 2 (Sub-zones)
+      const allAllowedZoneIds = [...assignedZoneIds, ...subZones.map(z => z.id)];
+
+      // D. Apply to whereClause
+      if (type_id) {
+        // If frontend requests a specific zone filter, verify they are allowed to see it
+        const requestedIdBigInt = BigInt(type_id);
+        const isAllowed = allAllowedZoneIds.some(id => id.toString() === requestedIdBigInt.toString());
+        
+        if (isAllowed) {
+          whereClause.type_id = requestedIdBigInt;
+        } else {
+          // They requested a zone outside their jurisdiction
+          return res.json({ data: [], pagination: { total: 0, page, limit, last_page: 1 } });
+        }
+      } else {
+        // Show all washrooms matching ALL of their allowed zones
+        whereClause.type_id = { in: allAllowedZoneIds };
+      }
+    } else {
+      // For non-Zonal Admins, just apply the standard type_id filter if requested by the frontend
+      if (type_id) {
+        whereClause.type_id = BigInt(type_id);
+      }
+    }
+    // =======================================================
+
+    // 3. Apply Company Filters
     if (user.role_id === 1 && company_id) {
       whereClause.company_id = BigInt(company_id);
     } else if (user.role_id === 2 && company_id) {
       whereClause.company_id = BigInt(company_id);
-    } else {
-      whereClause.company_id = company_id;
+    } else if (company_id) {
+      whereClause.company_id = BigInt(company_id);
     }
 
-    if (type_id) {
-      whereClause.type_id = BigInt(type_id);
-    }
-
+    // 4. Apply Status Filters
     if (include_unavailable !== "true") {
       whereClause.OR = [{ status: true }, { status: null }];
     }
@@ -713,24 +964,8 @@ export const getAllToilets = async (req, res) => {
     whereClause.deleted_at = null;
 
     const today = new Date();
-    const startOfDay = new Date(
-      today.getFullYear(),
-      today.getMonth(),
-      today.getDate(),
-      0,
-      0,
-      0,
-      0,
-    );
-    const endOfDay = new Date(
-      today.getFullYear(),
-      today.getMonth(),
-      today.getDate(),
-      23,
-      59,
-      59,
-      999,
-    );
+    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
 
     const totalRecords = await prisma.locations.count({
       where: Object.keys(whereClause).length ? whereClause : undefined,
@@ -741,18 +976,15 @@ export const getAllToilets = async (req, res) => {
       where: Object.keys(whereClause).length ? whereClause : undefined,
       skip: skip,
       take: limit,
-
-      // Use 'select' instead of 'include' to strip out heavy unused columns
       select: {
         id: true,
         name: true,
         created_at: true,
         status: true,
-        latitude: true, // Needed for map button
-        longitude: true, // Needed for map button
-        type_id: true, // Needed for frontend filtering
-        facility_company_id: true, // Needed for frontend filtering
-
+        latitude: true,
+        longitude: true,
+        type_id: true,
+        facility_company_id: true,
         location_types: {
           select: { id: true, name: true },
         },
@@ -777,7 +1009,6 @@ export const getAllToilets = async (req, res) => {
           },
           select: {
             id: true,
-            // Only fetching the name, no need for phone/email on the list page
             cleaner_user: {
               select: { id: true, name: true },
             },
@@ -792,26 +1023,17 @@ export const getAllToilets = async (req, res) => {
 
     // --- LEAN DATA MAPPING ---
     const result = allLocations.map((loc) => {
-      // Calculate Average Rating
       const hygieneScores = loc.cleaner_reviews.map((hs) => Number(hs.score));
       const ratingCount = hygieneScores.length;
       let averageRating = null;
 
       if (ratingCount > 0) {
-        const sumOfScores = hygieneScores.reduce(
-          (sum, score) => sum + score,
-          0,
-        );
+        const sumOfScores = hygieneScores.reduce((sum, score) => sum + score, 0);
         averageRating = sumOfScores / ratingCount;
       }
 
-      // Get Current Score
-      const currentScore =
-        loc.hygiene_scores.length > 0
-          ? Number(loc.hygiene_scores[0].score)
-          : null;
+      const currentScore = loc.hygiene_scores.length > 0 ? Number(loc.hygiene_scores[0].score) : null;
 
-      // Return only what the UI needs
       return {
         id: loc.id.toString(),
         name: loc.name,
@@ -821,25 +1043,20 @@ export const getAllToilets = async (req, res) => {
         longitude: loc.longitude,
         type_id: loc.type_id?.toString() || null,
         facility_company_id: loc.facility_company_id?.toString() || null,
-        averageRating: averageRating
-          ? parseFloat(averageRating.toFixed(2))
-          : null,
+        averageRating: averageRating ? parseFloat(averageRating.toFixed(2)) : null,
         currentScore: currentScore,
-
         location_types: loc.location_types
           ? {
               id: loc.location_types.id.toString(),
               name: loc.location_types.name,
             }
           : null,
-
         facility_companies: loc.facility_companies
           ? {
               id: loc.facility_companies.id.toString(),
               name: loc.facility_companies.name,
             }
           : null,
-
         cleaner_assignments: loc.cleaner_assignments.map((assignment) => ({
           id: assignment.id.toString(),
           cleaner_user: assignment.cleaner_user

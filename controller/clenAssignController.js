@@ -424,45 +424,241 @@ export const getAssignmentById = async (req, res) => {
 };
 
 
+// export const createAssignment = async (req, res) => {
+//   console.log("in create assignments");
+//   try {
+//     const { cleaner_user_id, company_id, location_ids, status, role_id } = req.body;
+
+//     console.log(req.body, "assignment create req body")
+//     console.log('after req.body ');
+
+//     // --- Validation ---
+//     if (
+//       !cleaner_user_id ||
+//       !company_id ||
+//       !location_ids ||
+//       !Array.isArray(location_ids) ||
+//       location_ids.length === 0
+//     ) {
+//       return res.status(400).json({
+//         status: "error",
+//         message:
+//           "Missing required fields: cleaner_user_id, company_id, and a non-empty array of location_ids.",
+//       });
+//     }
+
+//     // --- Fetch the locations ---
+//     const locations = await prisma.locations.findMany({
+//       where: {
+//         id: { in: location_ids.map((id) => BigInt(id)) },
+//       },
+//       select: { id: true, name: true, type_id: true },
+//     });
+
+//     if (locations.length !== location_ids.length) {
+//       return res.status(404).json({
+//         status: "error",
+//         message: "One or more selected locations could not be found.",
+//       });
+//     }
+
+//     // ✅ Check for existing assignments
+//     const existingAssignments = await prisma.cleaner_assignments.findMany({
+//       where: {
+//         cleaner_user_id: BigInt(cleaner_user_id),
+//         location_id: { in: location_ids.map((id) => BigInt(id)) },
+//         company_id: BigInt(company_id),
+//         status: 'assigned'
+//       },
+//       select: { location_id: true },
+//     });
+
+//     const existingLocationIds = existingAssignments.map((a) => a.location_id.toString());
+
+//     // Filter out locations that already have assignments
+//     const locationsToAssign = locations.filter(
+//       (loc) => !existingLocationIds.includes(loc.id.toString())
+//     );
+
+//     if (locationsToAssign.length === 0) {
+//       return res.status(400).json({
+//         status: "error",
+//         message: "This cleaner is already assigned to all selected locations.",
+//         existingAssignments: existingLocationIds,
+//       });
+//     }
+
+//     // Prepare data for new assignments only
+//     const assignmentsToCreate = locationsToAssign.map((location) => ({
+//       name: location.name,
+//       cleaner_user_id: BigInt(cleaner_user_id),
+//       company_id: BigInt(company_id),
+//       type_id: location.type_id,
+//       location_id: location.id,
+//       status: status || "unassigned",
+//       role_id: role_id
+//     }));
+
+//     // --- Bulk insert ---
+//     const result = await prisma.cleaner_assignments.createMany({
+//       data: assignmentsToCreate,
+//     });
+
+//     console.log(result, "result");
+
+//     // Prepare response message
+//     const skippedCount = locations.length - locationsToAssign.length;
+//     let message = `${result.count} assignment(s) created successfully.`;
+
+//     if (skippedCount > 0) {
+//       message += ` ${skippedCount} location(s) skipped (already assigned).`;
+//     }
+
+//     res.status(201).json({
+//       status: "success",
+//       message: message,
+//       data: {
+//         created: result.count,
+//         skipped: skippedCount,
+//         skippedLocationIds: existingLocationIds,
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Error creating assignments:", error);
+//     res.status(500).json({
+//       status: "error",
+//       message: "Internal Server Error",
+//       detail: process.env.NODE_ENV === 'development' ? error.message : undefined
+//     });
+//   }
+// };
+
 export const createAssignment = async (req, res) => {
-  console.log("in create assignments");
   try {
-    const { cleaner_user_id, company_id, location_ids, status, role_id } = req.body;
+    // ✅ Extract type_ids (array) instead of type_id
+    const { cleaner_user_id, company_id, location_ids, type_ids, type_id, status, role_id } = req.body;
+    const caller = req.user; 
 
-    console.log(req.body, "assignment create req body")
-    console.log('after req.body ');
-
-    // --- Validation ---
-    if (
-      !cleaner_user_id ||
-      !company_id ||
-      !location_ids ||
-      !Array.isArray(location_ids) ||
-      location_ids.length === 0
-    ) {
+    if (!cleaner_user_id || !company_id || !role_id) {
       return res.status(400).json({
         status: "error",
-        message:
-          "Missing required fields: cleaner_user_id, company_id, and a non-empty array of location_ids.",
+        message: "Missing required fields: cleaner_user_id, company_id, and role_id.",
       });
     }
 
-    // --- Fetch the locations ---
+    // Normalize type_ids so it always treats it as an array (even if frontend sends old 'type_id' key)
+    const typesArray = type_ids || (type_id ? (Array.isArray(type_id) ? type_id : [type_id]) : []);
+
+    const hasLocations = location_ids && Array.isArray(location_ids) && location_ids.length > 0;
+    const hasTypes = typesArray && Array.isArray(typesArray) && typesArray.length > 0;
+
+    if (!hasLocations && !hasTypes) {
+      return res.status(400).json({
+        status: "error",
+        message: "You must provide either an array of location_ids OR type_ids.",
+      });
+    }
+
+    if (hasLocations && hasTypes) {
+      return res.status(400).json({
+        status: "error",
+        message: "You cannot provide both location_ids and type_ids. Choose one assignment method.",
+      });
+    }
+
+    const parsedRoleId = parseInt(role_id);
+
+    // --- 🚨 SECURITY AUTHORIZATION CHECK 🚨 ---
+    if (caller.role_id !== 1 && caller.role_id !== 2) {
+      const callerAllowedBigInts = await RBACFilterService.getAuthorizedLocationIds(caller.id, caller.company_id);
+      const callerAllowedIds = callerAllowedBigInts.map(id => id.toString());
+
+      if (hasLocations) {
+        const hasUnauthorizedLocations = location_ids.some(
+          (reqLocId) => !callerAllowedIds.includes(reqLocId.toString())
+        );
+        if (hasUnauthorizedLocations) {
+          return res.status(403).json({
+            status: "error",
+            message: "Forbidden: You are trying to assign a user to a location you do not manage."
+          });
+        }
+      }
+
+      if (hasTypes) {
+        return res.status(403).json({
+          status: "error",
+          message: "Forbidden: Only Administrators can grant broad zone/type-based access."
+        });
+      }
+    }
+
+    // --- SCENARIO A: TYPE-BASED ASSIGNMENT (Zonal Admins / Broad Access) ---
+    if (hasTypes) {
+      // 1. Find if they are already assigned to any of these zones
+      const existingTypeAssignments = await prisma.cleaner_assignments.findMany({
+        where: {
+          cleaner_user_id: BigInt(cleaner_user_id),
+          type_id: { in: typesArray.map((id) => BigInt(id)) },
+          company_id: BigInt(company_id),
+          status: 'assigned'
+        }
+      });
+
+      const existingTypeIds = existingTypeAssignments.map((a) => a.type_id.toString());
+      const typesToAssign = typesArray.filter((id) => !existingTypeIds.includes(id.toString()));
+
+      if (typesToAssign.length === 0) {
+        return res.status(400).json({ 
+          status: "error", 
+          message: "User is already assigned to all selected zones." 
+        });
+      }
+
+      // 2. Fetch the zone names from DB so we can save "Nagpur" instead of "Broad Type Assignment"
+      const zoneRecords = await prisma.location_types.findMany({
+        where: { id: { in: typesToAssign.map(id => BigInt(id)) } },
+        select: { id: true, name: true }
+      });
+
+      // 3. Prepare the data payload for createMany
+      const assignmentsToCreate = typesToAssign.map((typeId) => {
+        const matchingZone = zoneRecords.find(z => z.id.toString() === typeId.toString());
+        return {
+          name: matchingZone ? matchingZone.name : "Zone Assignment",
+          cleaner_user_id: BigInt(cleaner_user_id),
+          company_id: BigInt(company_id),
+          type_id: BigInt(typeId),
+          location_id: null,
+          status: status || "assigned",
+          role_id: parsedRoleId,
+        };
+      });
+
+      // 4. Bulk insert the zones
+      const result = await prisma.cleaner_assignments.createMany({ data: assignmentsToCreate });
+
+      const skippedCount = typesArray.length - typesToAssign.length;
+      let message = `${result.count} zone assignment(s) created successfully.`;
+      if (skippedCount > 0) message += ` ${skippedCount} zone(s) skipped (already assigned).`;
+
+      return res.status(201).json({
+        status: "success",
+        message: message,
+        data: { created: result.count, skipped: skippedCount }
+      });
+    }
+
+    // --- SCENARIO B: LOCATION-BASED ASSIGNMENT (Specific Nodes) ---
     const locations = await prisma.locations.findMany({
-      where: {
-        id: { in: location_ids.map((id) => BigInt(id)) },
-      },
-      select: { id: true, name: true, type_id: true },
+      where: { id: { in: location_ids.map((id) => BigInt(id)) } },
+      select: { id: true, name: true }, 
     });
 
     if (locations.length !== location_ids.length) {
-      return res.status(404).json({
-        status: "error",
-        message: "One or more selected locations could not be found.",
-      });
+      return res.status(404).json({ status: "error", message: "One or more selected locations could not be found." });
     }
 
-    // ✅ Check for existing assignments
     const existingAssignments = await prisma.cleaner_assignments.findMany({
       where: {
         cleaner_user_id: BigInt(cleaner_user_id),
@@ -474,64 +670,43 @@ export const createAssignment = async (req, res) => {
     });
 
     const existingLocationIds = existingAssignments.map((a) => a.location_id.toString());
-
-    // Filter out locations that already have assignments
-    const locationsToAssign = locations.filter(
-      (loc) => !existingLocationIds.includes(loc.id.toString())
-    );
+    const locationsToAssign = locations.filter((loc) => !existingLocationIds.includes(loc.id.toString()));
 
     if (locationsToAssign.length === 0) {
       return res.status(400).json({
         status: "error",
-        message: "This cleaner is already assigned to all selected locations.",
+        message: "This user is already assigned to all selected locations.",
         existingAssignments: existingLocationIds,
       });
     }
 
-    // Prepare data for new assignments only
     const assignmentsToCreate = locationsToAssign.map((location) => ({
       name: location.name,
       cleaner_user_id: BigInt(cleaner_user_id),
       company_id: BigInt(company_id),
-      type_id: location.type_id,
+      type_id: null, 
       location_id: location.id,
-      status: status || "unassigned",
-      role_id: role_id
+      status: status || "assigned",
+      role_id: parsedRoleId,
     }));
 
-    // --- Bulk insert ---
-    const result = await prisma.cleaner_assignments.createMany({
-      data: assignmentsToCreate,
-    });
+    const result = await prisma.cleaner_assignments.createMany({ data: assignmentsToCreate });
 
-    console.log(result, "result");
-
-    // Prepare response message
     const skippedCount = locations.length - locationsToAssign.length;
-    let message = `${result.count} assignment(s) created successfully.`;
-
-    if (skippedCount > 0) {
-      message += ` ${skippedCount} location(s) skipped (already assigned).`;
-    }
+    let message = `${result.count} location assignment(s) created successfully.`;
+    if (skippedCount > 0) message += ` ${skippedCount} location(s) skipped (already assigned).`;
 
     res.status(201).json({
       status: "success",
       message: message,
-      data: {
-        created: result.count,
-        skipped: skippedCount,
-        skippedLocationIds: existingLocationIds,
-      },
+      data: { created: result.count, skipped: skippedCount, skippedLocationIds: existingLocationIds },
     });
   } catch (error) {
     console.error("Error creating assignments:", error);
-    res.status(500).json({
-      status: "error",
-      message: "Internal Server Error",
-      detail: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
+    res.status(500).json({ status: "error", message: "Internal Server Error" });
   }
 };
+
 
 export const updateAssignment = async (req, res) => {
   try {
@@ -605,41 +780,143 @@ export const deleteAssignment = async (req, res) => {
   }
 };
 
+// export const createAssignmentsForLocation = async (req, res) => {
+//   console.log("in create assignments for location", req.body);
+//   try {
+//     const { location_id, cleaner_user_ids, company_id, status, role_id } = req.body;
+//     console.log(req.body, "req.body");
+//     // --- Validation ---
+//     if (
+//       !location_id ||
+//       !company_id ||
+//       !cleaner_user_ids ||
+//       !Array.isArray(cleaner_user_ids) ||
+//       cleaner_user_ids.length === 0 ||
+//       !role_id // ✅ Validate role_id
+//     ) {
+//       return res.status(400).json({
+//         status: "error",
+//         message:
+//           "Missing required fields: location_id, company_id, and a non-empty array of cleaner_user_ids.",
+//       });
+//     }
+
+//     // --- Fetch the location ---
+//     const location = await prisma.locations.findUnique({
+//       where: { id: BigInt(location_id) },
+//       select: { id: true, name: true, type_id: true },
+//     });
+
+//     if (!location) {
+//       return res.status(404).json({
+//         status: "error",
+//         message: "Location not found.",
+//       });
+//     }
+
+//     // ✅ Check for existing assignments
+//     const existingAssignments = await prisma.cleaner_assignments.findMany({
+//       where: {
+//         location_id: BigInt(location_id),
+//         cleaner_user_id: { in: cleaner_user_ids.map((id) => BigInt(id)) },
+//         company_id: BigInt(company_id),
+//       },
+//       select: { cleaner_user_id: true },
+//     });
+
+//     const existingCleanerIds = existingAssignments.map((a) => a.cleaner_user_id.toString());
+
+//     // Filter out cleaners who are already assigned
+//     const cleanersToAssign = cleaner_user_ids.filter(
+//       (cleanerId) => !existingCleanerIds.includes(cleanerId.toString())
+//     );
+
+//     if (cleanersToAssign.length === 0) {
+//       return res.status(400).json({
+//         status: "error",
+//         message: "All selected cleaners are already assigned to this location.",
+//         existingAssignments: existingCleanerIds,
+//       });
+//     }
+
+//     // Prepare assignments for new cleaners only
+//     const assignmentsToCreate = cleanersToAssign.map((cleanerId) => ({
+//       name: location.name,
+//       cleaner_user_id: BigInt(cleanerId),
+//       company_id: BigInt(company_id),
+//       type_id: location.type_id,
+//       location_id: location.id,
+//       role_id: role_id, // ✅ Store role_id
+//       status: status || "assigned",
+//     }));
+
+//     // --- Bulk insert ---
+//     const result = await prisma.cleaner_assignments.createMany({
+//       data: assignmentsToCreate,
+//     });
+
+//     // Prepare response message
+//     const skippedCount = cleaner_user_ids.length - cleanersToAssign.length;
+//     let message = `${result.count} cleaner(s) assigned successfully.`;
+
+//     if (skippedCount > 0) {
+//       message += ` ${skippedCount} cleaner(s) skipped (already assigned).`;
+//     }
+
+//     res.status(201).json({
+//       status: "success",
+//       message: message,
+//       data: {
+//         created: result.count,
+//         skipped: skippedCount,
+//         skippedCleanerIds: existingCleanerIds,
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Error creating assignments for location:", error);
+//     res.status(500).json({
+//       status: "error",
+//       message: "Internal Server Error",
+//       detail: process.env.NODE_ENV === 'development' ? error.message : undefined
+//     });
+//   }
+// };
+
 export const createAssignmentsForLocation = async (req, res) => {
-  console.log("in create assignments for location", req.body);
   try {
     const { location_id, cleaner_user_ids, company_id, status, role_id } = req.body;
-    console.log(req.body, "req.body");
-    // --- Validation ---
-    if (
-      !location_id ||
-      !company_id ||
-      !cleaner_user_ids ||
-      !Array.isArray(cleaner_user_ids) ||
-      cleaner_user_ids.length === 0 ||
-      !role_id // ✅ Validate role_id
-    ) {
-      return res.status(400).json({
-        status: "error",
-        message:
-          "Missing required fields: location_id, company_id, and a non-empty array of cleaner_user_ids.",
-      });
+    const caller = req.user;
+    
+    // --- 1. Validation ---
+    if (!location_id || !company_id || !cleaner_user_ids || !Array.isArray(cleaner_user_ids) || cleaner_user_ids.length === 0 || !role_id) {
+      return res.status(400).json({ status: "error", message: "Missing required fields." });
     }
 
-    // --- Fetch the location ---
+    const parsedRoleId = parseInt(role_id);
+
+    // --- 2. 🚨 SECURITY AUTHORIZATION CHECK 🚨 ---
+    if (caller.role_id !== 1 && caller.role_id !== 2) {
+      const callerAllowedBigInts = await RBACFilterService.getAuthorizedLocationIds(caller.id, caller.company_id);
+      const callerAllowedIds = callerAllowedBigInts.map(id => id.toString());
+
+      if (!callerAllowedIds.includes(location_id.toString())) {
+        return res.status(403).json({
+          status: "error",
+          message: "Forbidden: You are trying to assign users to a location you do not manage."
+        });
+      }
+    }
+    // --- END SECURITY CHECK ---
+
     const location = await prisma.locations.findUnique({
       where: { id: BigInt(location_id) },
-      select: { id: true, name: true, type_id: true },
+      select: { id: true, name: true },
     });
 
     if (!location) {
-      return res.status(404).json({
-        status: "error",
-        message: "Location not found.",
-      });
+      return res.status(404).json({ status: "error", message: "Location not found." });
     }
 
-    // ✅ Check for existing assignments
     const existingAssignments = await prisma.cleaner_assignments.findMany({
       where: {
         location_id: BigInt(location_id),
@@ -650,65 +927,44 @@ export const createAssignmentsForLocation = async (req, res) => {
     });
 
     const existingCleanerIds = existingAssignments.map((a) => a.cleaner_user_id.toString());
-
-    // Filter out cleaners who are already assigned
-    const cleanersToAssign = cleaner_user_ids.filter(
-      (cleanerId) => !existingCleanerIds.includes(cleanerId.toString())
-    );
+    const cleanersToAssign = cleaner_user_ids.filter((id) => !existingCleanerIds.includes(id.toString()));
 
     if (cleanersToAssign.length === 0) {
       return res.status(400).json({
         status: "error",
-        message: "All selected cleaners are already assigned to this location.",
+        message: "All selected users are already assigned to this location.",
         existingAssignments: existingCleanerIds,
       });
     }
 
-    // Prepare assignments for new cleaners only
     const assignmentsToCreate = cleanersToAssign.map((cleanerId) => ({
       name: location.name,
       cleaner_user_id: BigInt(cleanerId),
       company_id: BigInt(company_id),
-      type_id: location.type_id,
+      type_id: null, 
       location_id: location.id,
-      role_id: role_id, // ✅ Store role_id
+      role_id: parsedRoleId,
       status: status || "assigned",
+      // supervisor_id: BigInt(caller.id) // Optional tracking
     }));
 
-    // --- Bulk insert ---
-    const result = await prisma.cleaner_assignments.createMany({
-      data: assignmentsToCreate,
-    });
+    const result = await prisma.cleaner_assignments.createMany({ data: assignmentsToCreate });
 
-    // Prepare response message
     const skippedCount = cleaner_user_ids.length - cleanersToAssign.length;
-    let message = `${result.count} cleaner(s) assigned successfully.`;
-
-    if (skippedCount > 0) {
-      message += ` ${skippedCount} cleaner(s) skipped (already assigned).`;
-    }
+    let message = `${result.count} user(s) assigned successfully.`;
+    if (skippedCount > 0) message += ` ${skippedCount} user(s) skipped (already assigned).`;
 
     res.status(201).json({
       status: "success",
       message: message,
-      data: {
-        created: result.count,
-        skipped: skippedCount,
-        skippedCleanerIds: existingCleanerIds,
-      },
+      data: { created: result.count, skipped: skippedCount, skippedCleanerIds: existingCleanerIds },
     });
   } catch (error) {
     console.error("Error creating assignments for location:", error);
-    res.status(500).json({
-      status: "error",
-      message: "Internal Server Error",
-      detail: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
+    res.status(500).json({ status: "error", message: "Internal Server Error" });
   }
 };
 
-
-// In your assignments controller
 export const getAssignmentsByLocation = async (req, res) => {
   try {
     const { location_id } = req.params;

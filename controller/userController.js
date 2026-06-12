@@ -36,7 +36,6 @@ import RBACFilterService from "../utils/rbacFilterService.js";
 //   }
 // }
 
-
 export async function getclientUser(req, res) {
   try {
     const { companyId, roleId, page = 1, limit = 15, search } = req.query;
@@ -44,32 +43,64 @@ export async function getclientUser(req, res) {
     const parsedLimit = Math.max(parseInt(limit, 10) || 15, 1);
     const skip = (parsedPage - 1) * parsedLimit;
 
-    // 1. Get Base RBAC Filter
+    const loggedInUserId = BigInt(req.user.id);
+    const loggedInUserRole = Number(req.user.role_id);
+
+    // 1. Get Base RBAC Filter (Assignment Logic)
     const userFilter = await RBACFilterService.getUserFilter(req.user, "getUser");
 
-    // 2. Base Where (used for grouping all available roles)
-    const baseWhere = { ...userFilter, deleted_at: null };
+    // 2. Base Where
+    const baseWhere = { 
+      deleted_at: null,
+      role_id: { notIn: [2, 6, 7] }, // Hide Admin, Zonal Admin, Facility Supv
+      // ✅ FIX 1: Use an AND array immediately so we can stack conditions safely
+      AND: [
+        { id: { not: loggedInUserId } } // Never show the logged-in user to themselves
+      ]
+    };
+    
     if (companyId) {
       baseWhere.company_id = BigInt(companyId);
     }
 
-    // 3. Main Where (used for the table list and total pagination count)
+    // ✅ FIX 2: Merge Assignment logic with "Created By" logic
+    // We only apply this OR logic for roles like Supervisor (3) or Facility Admin (8)
+    if (loggedInUserRole === 3 || loggedInUserRole === 8) {
+      baseWhere.AND.push({
+        OR: [
+          userFilter, // Users they are assigned to manage
+          { created_by: loggedInUserId } // Users they created manually
+        ]
+      });
+    } else {
+      // For Admin/Superadmin, just apply the standard user filter
+      if (Object.keys(userFilter).length > 0) {
+        baseWhere.AND.push(userFilter);
+      }
+    }
+
+    // 3. Main Where
     const mainWhere = { ...baseWhere };
+    
+    // Safely copy the AND array so we don't accidentally overwrite the RBAC rules
+    mainWhere.AND = [...baseWhere.AND];
+
     if (roleId && roleId !== "all") {
-      mainWhere.role_id = Number(roleId);
+      mainWhere.AND.push({ role_id: Number(roleId) });
     }
     
     if (search) {
-      mainWhere.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { phone: { contains: search, mode: 'insensitive' } }
-      ];
+      mainWhere.AND.push({
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { email: { contains: search, mode: 'insensitive' } },
+          { phone: { contains: search, mode: 'insensitive' } }
+        ]
+      });
     }
 
-    // 4. THE FIX: Added the groupBy query back into the transaction array!
+    // 4. Execute Queries
     const [users, totalCount, roleCountsRaw] = await prisma.$transaction([
-      // Query 1: Get the actual user rows
       prisma.users.findMany({
         where: mainWhere, 
         skip: skip,       
@@ -77,19 +108,17 @@ export async function getclientUser(req, res) {
         include: { role: true },
         orderBy: { id: "desc" },
       }),
-      // Query 2: Get total count for pagination
       prisma.users.count({ 
         where: mainWhere  
       }),
-      // Query 3: Get the individual role counts for the top cards
       prisma.users.groupBy({
         by: ['role_id'],
-        where: baseWhere, // Use baseWhere so cards show ALL counts, regardless of search
+        where: baseWhere, 
         _count: { _all: true }
       })
     ]);
 
-    // Format role counts for frontend cards safely
+    // Format role counts
     const roleCounts = roleCountsRaw.reduce((acc, item) => {
       if (item.role_id) acc[item.role_id.toString()] = item._count._all;
       return acc;
@@ -100,12 +129,13 @@ export async function getclientUser(req, res) {
       ...user,
       id: user.id.toString(),
       company_id: user.company_id?.toString() || null,
+      created_by: user.created_by?.toString() || null,
     }));
 
     // Return Data
     res.status(200).json({
       data: formattedUsers,
-      roleCounts: roleCounts, // Now this will successfully pass to the frontend
+      roleCounts: roleCounts,
       meta: {
         totalCount: totalCount,
         totalPages: Math.ceil(totalCount / parsedLimit),
@@ -122,6 +152,92 @@ export async function getclientUser(req, res) {
     });
   }
 }
+
+// export async function getclientUser(req, res) {
+//   try {
+//     const { companyId, roleId, page = 1, limit = 15, search } = req.query;
+//     const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
+//     const parsedLimit = Math.max(parseInt(limit, 10) || 15, 1);
+//     const skip = (parsedPage - 1) * parsedLimit;
+
+//     // 1. Get Base RBAC Filter
+//     const userFilter = await RBACFilterService.getUserFilter(req.user, "getUser");
+
+//     // 2. Base Where (used for grouping all available roles)
+//     const baseWhere = { ...userFilter, deleted_at: null };
+//     if (companyId) {
+//       baseWhere.company_id = BigInt(companyId);
+//     }
+
+//     // 3. Main Where (used for the table list and total pagination count)
+//     const mainWhere = { ...baseWhere };
+//     if (roleId && roleId !== "all") {
+//       mainWhere.role_id = Number(roleId);
+//     }
+    
+//     if (search) {
+//       mainWhere.OR = [
+//         { name: { contains: search, mode: 'insensitive' } },
+//         { email: { contains: search, mode: 'insensitive' } },
+//         { phone: { contains: search, mode: 'insensitive' } }
+//       ];
+//     }
+
+//     // 4. THE FIX: Added the groupBy query back into the transaction array!
+//     const [users, totalCount, roleCountsRaw] = await prisma.$transaction([
+//       // Query 1: Get the actual user rows
+//       prisma.users.findMany({
+//         where: mainWhere, 
+//         skip: skip,       
+//         take: parsedLimit,
+//         include: { role: true },
+//         orderBy: { id: "desc" },
+//       }),
+//       // Query 2: Get total count for pagination
+//       prisma.users.count({ 
+//         where: mainWhere  
+//       }),
+//       // Query 3: Get the individual role counts for the top cards
+//       prisma.users.groupBy({
+//         by: ['role_id'],
+//         where: baseWhere, // Use baseWhere so cards show ALL counts, regardless of search
+//         _count: { _all: true }
+//       })
+//     ]);
+
+//     // Format role counts for frontend cards safely
+//     const roleCounts = roleCountsRaw.reduce((acc, item) => {
+//       if (item.role_id) acc[item.role_id.toString()] = item._count._all;
+//       return acc;
+//     }, {});
+
+//     // Format user IDs
+//     const formattedUsers = users.map((user) => ({
+//       ...user,
+//       id: user.id.toString(),
+//       company_id: user.company_id?.toString() || null,
+//     }));
+
+//     // Return Data
+//     res.status(200).json({
+//       data: formattedUsers,
+//       roleCounts: roleCounts, // Now this will successfully pass to the frontend
+//       meta: {
+//         totalCount: totalCount,
+//         totalPages: Math.ceil(totalCount / parsedLimit),
+//         currentPage: parsedPage,
+//         itemsPerPage: parsedLimit,
+//       },
+//     });
+
+//   } catch (error) {
+//     console.error("Error fetching users with RBAC and Pagination:", error);
+//     res.status(500).json({ 
+//       status: "error", 
+//       message: "Internal Server Error fetching users." 
+//     });
+//   }
+// }
 
 export async function getUser(req, res) {
   try {
@@ -526,28 +642,30 @@ export async function getUserById(req, res) {
 // };
 
 export const createUser = async (req, res) => {
-  console.log("in create user", req.body);
+
 
   try {
     const { password, location_ids = [], company_id, ...data } = req.body;
-    // Extract company_id from the body, not query
 
-    console.log(company_id, "company_id from body");
+    if (!password) return res.status(400).json({ message: "Password is required" });
+    if (!company_id) return res.status(400).json({ message: "Company ID is required" });
 
-    if (!password) {
-      return res.status(400).json({ message: "Password is required" });
-    }
+   
 
-    if (!company_id) {
-      return res.status(400).json({ message: "Company ID is required" });
-    }
+    const currentUser = req.user; 
+    
+    // 🔴 2. Check multiple possible locations for role_id just in case it's nested
+    const currentRoleId = currentUser?.role_id 
+      || currentUser?.role?.id 
+      || currentUser?.user?.role_id;
 
-    console.log("Hashing password...");
+    console.log("3. Extracted Role ID:", currentRoleId);
+
+    const isSupervisor = parseInt(currentRoleId) === 3;
+  
+
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    console.log("Creating user with company_id:", company_id);
-
-    // Helper function to serialize BigInt values
     const serializeBigInt = (obj) => {
       return JSON.parse(
         JSON.stringify(obj, (key, value) =>
@@ -556,94 +674,155 @@ export const createUser = async (req, res) => {
       );
     };
 
+    // 🔴 3. Explicitly grab the user ID (handling nesting if necessary)
+    const currentUserId = currentUser?.id || currentUser?.user?.id;
+
     const newUser = await prisma.users.create({
       data: {
         ...data,
         password: hashedPassword,
-        company_id: BigInt(company_id), // Use company_id from body
+        company_id: BigInt(company_id), 
         birthdate: data?.birthdate ? new Date(data.birthdate) : null,
-        // ...(location_ids.length > 0 && {
-        //   location_assignments: {
-        //     create: location_ids.map((locId) => ({
-        //       location_id: BigInt(locId),
-        //     })),
-        //   },
-        // }),
+        // Inject created_by ONLY if they are a supervisor AND we have an ID
+        ...(isSupervisor && currentUserId && { created_by: BigInt(currentUserId) }),
       },
-      include: {
-        // location_assignments: {
-        //   include: {
-        //     location: {
-        //       select: {
-        //         id: true,
-        //         name: true,
-        //         // address: true,
-        //       }
-        //     }
-        //   }
-        // }
-      },
+      include: {},
     });
 
-    console.log("User created successfully:", newUser.id);
 
-    // Serialize the response to handle BigInt values
     const safeUser = serializeBigInt({
       ...newUser,
       id: newUser.id.toString(),
       company_id: newUser.company_id?.toString(),
-      // location_assignments: newUser.location_assignments?.map(assignment => ({
-      //   ...assignment,
-      //   location_id: assignment.location_id.toString(),
-      //   user_id: assignment.user_id.toString(),
-      //   location: assignment.location ? {
-      //     ...assignment.location,
-      //     id: assignment.location.id.toString()
-      //   } : null
-      // }))
+      ...(newUser.created_by && { created_by: newUser.created_by.toString() }),
     });
 
-    // console.log('Serialized user data:', safeUser);
     res.status(201).json(safeUser);
   } catch (error) {
     console.error("Error in createUser:", error);
-
-    // Handle Prisma unique constraint violations
-    if (error.code === "P2002") {
-      const fieldName = error.meta?.target?.join(", ") || "field";
-      return res.status(409).json({
-        message: `User with this ${fieldName} already exists.`,
-        code: "DUPLICATE_ENTRY",
-      });
-    }
-
-    // Handle foreign key constraint violations
-    if (error.code === "P2003") {
-      return res.status(400).json({
-        message: "Invalid company ID or location ID provided.",
-        code: "INVALID_REFERENCE",
-      });
-    }
-
-    // Handle other Prisma errors
-    if (error.code?.startsWith("P")) {
-      return res.status(400).json({
-        message: "Database constraint violation.",
-        code: error.code,
-        detail: error.message,
-      });
-    }
-
-    // Generic error handling
-    res.status(500).json({
-      message: "Error creating user",
-      error: error.message,
-      code: "INTERNAL_ERROR",
-    });
+    res.status(500).json({ message: "Error creating user", error: error.message });
   }
 };
 
-// --- UPDATE USER ---
+// export const createUser = async (req, res) => {
+//   console.log("in create user", req.body);
+
+//   try {
+//     const { password, location_ids = [], company_id, ...data } = req.body;
+//     // Extract company_id from the body, not query
+
+//     console.log(company_id, "company_id from body");
+
+//     if (!password) {
+//       return res.status(400).json({ message: "Password is required" });
+//     }
+
+//     if (!company_id) {
+//       return res.status(400).json({ message: "Company ID is required" });
+//     }
+
+//     console.log("Hashing password...");
+//     const hashedPassword = await bcrypt.hash(password, 10);
+
+//     console.log("Creating user with company_id:", company_id);
+
+//     // Helper function to serialize BigInt values
+//     const serializeBigInt = (obj) => {
+//       return JSON.parse(
+//         JSON.stringify(obj, (key, value) =>
+//           typeof value === "bigint" ? value.toString() : value,
+//         ),
+//       );
+//     };
+
+//     const newUser = await prisma.users.create({
+//       data: {
+//         ...data,
+//         password: hashedPassword,
+//         company_id: BigInt(company_id), // Use company_id from body
+//         birthdate: data?.birthdate ? new Date(data.birthdate) : null,
+//         // ...(location_ids.length > 0 && {
+//         //   location_assignments: {
+//         //     create: location_ids.map((locId) => ({
+//         //       location_id: BigInt(locId),
+//         //     })),
+//         //   },
+//         // }),
+//       },
+//       include: {
+//         // location_assignments: {
+//         //   include: {
+//         //     location: {
+//         //       select: {
+//         //         id: true,
+//         //         name: true,
+//         //         // address: true,
+//         //       }
+//         //     }
+//         //   }
+//         // }
+//       },
+//     });
+
+//     console.log("User created successfully:", newUser.id);
+
+//     // Serialize the response to handle BigInt values
+//     const safeUser = serializeBigInt({
+//       ...newUser,
+//       id: newUser.id.toString(),
+//       company_id: newUser.company_id?.toString(),
+//       // location_assignments: newUser.location_assignments?.map(assignment => ({
+//       //   ...assignment,
+//       //   location_id: assignment.location_id.toString(),
+//       //   user_id: assignment.user_id.toString(),
+//       //   location: assignment.location ? {
+//       //     ...assignment.location,
+//       //     id: assignment.location.id.toString()
+//       //   } : null
+//       // }))
+//     });
+
+//     // console.log('Serialized user data:', safeUser);
+//     res.status(201).json(safeUser);
+//   } catch (error) {
+//     console.error("Error in createUser:", error);
+
+//     // Handle Prisma unique constraint violations
+//     if (error.code === "P2002") {
+//       const fieldName = error.meta?.target?.join(", ") || "field";
+//       return res.status(409).json({
+//         message: `User with this ${fieldName} already exists.`,
+//         code: "DUPLICATE_ENTRY",
+//       });
+//     }
+
+//     // Handle foreign key constraint violations
+//     if (error.code === "P2003") {
+//       return res.status(400).json({
+//         message: "Invalid company ID or location ID provided.",
+//         code: "INVALID_REFERENCE",
+//       });
+//     }
+
+//     // Handle other Prisma errors
+//     if (error.code?.startsWith("P")) {
+//       return res.status(400).json({
+//         message: "Database constraint violation.",
+//         code: error.code,
+//         detail: error.message,
+//       });
+//     }
+
+//     // Generic error handling
+//     res.status(500).json({
+//       message: "Error creating user",
+//       error: error.message,
+//       code: "INTERNAL_ERROR",
+//     });
+//   }
+// };
+
+
 export const updateUser = async (req, res) => {
   const userId = BigInt(req.params.id);
   try {

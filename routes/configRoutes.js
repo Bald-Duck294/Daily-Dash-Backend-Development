@@ -5,7 +5,7 @@ import {
   getConfigurationByName,
   updateConfiguration,
   deleteConfiguration,
-  toggleConfigurationStatus,
+  // toggleConfigurationStatus,
   duplicateConfiguration,
   // --- New Dynamic Configuration System Handlers ---
   getDynamicModules,
@@ -33,7 +33,7 @@ router.get("/", getAllConfigurations);
 router.get("/id/:id", getConfigurationById);
 router.patch("/:id", updateConfiguration);
 router.delete("/:id", deleteConfiguration);
-router.patch("/:id/toggle-status", toggleConfigurationStatus);
+// router.patch("/:id/toggle-status", toggleConfigurationStatus);
 router.post("/:id/duplicate", duplicateConfiguration);
 
 export default router;

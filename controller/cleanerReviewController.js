@@ -133,6 +133,112 @@ export async function getCleanerReview(req, res) {
   }
 }
 
+export async function getCleanerReviews(req, res) {
+  const { 
+    cleaner_user_id, 
+    cleaner_id, 
+    status, 
+    start_date, 
+    end_date, 
+    company_id,
+    page = 1,      // Default page 1
+    limit = 15     // Default limit 15
+  } = req.query;
+
+  try {
+    const whereClause = {};
+
+    if (company_id) whereClause.company_id = BigInt(company_id);
+
+    const finalCleanerId = cleaner_user_id || cleaner_id;
+    if (finalCleanerId && finalCleanerId !== "all") {
+      whereClause.cleaner_user_id = BigInt(finalCleanerId);
+    }
+
+    if (status && status !== "all") {
+      whereClause.status = status;
+    }
+
+    if (start_date) {
+      const startDateObj = new Date(start_date);
+      startDateObj.setUTCHours(0, 0, 0, 0);
+
+      const endDateObj = end_date ? new Date(end_date) : new Date(start_date);
+      endDateObj.setUTCHours(23, 59, 59, 999);
+
+      whereClause.created_at = {
+        gte: startDateObj,
+        lte: endDateObj,
+      };
+    }
+
+    // Pagination math
+    const take = parseInt(limit);
+    const skip = (parseInt(page) - 1) * take;
+
+    // Use Prisma transaction to get both the TOTAL count and the PAGINATED data at the same time
+    const [totalItems, reviews] = await prisma.$transaction([
+      prisma.cleaner_review.count({ where: whereClause }),
+      prisma.cleaner_review.findMany({
+        where: whereClause,
+        take: take,
+        skip: skip,
+        // STRICT SELECTION: Only fetching exactly what is seen in the UI cards
+        select: {
+          id: true,
+          status: true,
+          created_at: true,
+          before_photo: true, // <-- Fetched for evidence logs
+          after_photo: true,  // <-- ADDED: Fetched for evidence logs
+          cleaner_user: {
+            select: {id:true, name: true }
+          },
+          location: {
+            select: { name: true }
+          }
+        },
+        orderBy: {
+          created_at: 'desc'
+        }
+      })
+    ]);
+
+    const safeSerialize = (obj) => {
+      if (obj === null || obj === undefined) return obj;
+      if (typeof obj === 'bigint') return obj.toString();
+      if (obj instanceof Date) return obj.toISOString();
+      if (Array.isArray(obj)) return obj.map(safeSerialize);
+      if (typeof obj === 'object') {
+        const serialized = {};
+        for (const [key, value] of Object.entries(obj)) {
+          serialized[key] = safeSerialize(value);
+        }
+        return serialized;
+      }
+      return obj;
+    };
+
+    const serializedReviews = reviews.map(review => safeSerialize(review));
+    const totalPages = Math.ceil(totalItems / take);
+
+    // Return an object containing both the data and pagination metadata
+    res.json({
+      data: serializedReviews,
+      pagination: {
+        total_items: totalItems,
+        total_pages: totalPages,
+        current_page: parseInt(page),
+        items_per_page: take,
+        has_next_page: parseInt(page) < totalPages,
+        has_prev_page: parseInt(page) > 1
+      }
+    });
+
+  } catch (err) {
+    console.error("Fetch Cleaner Reviews Error:", err);
+    res.status(500).json({ error: "Failed to fetch cleaner reviews" });
+  }
+}
 
 export const getCleanerReviewsById = async (req, res) => {
   console.log('Getting cleaner reviews by cleaner_user_id');
