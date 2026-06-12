@@ -49,11 +49,17 @@ export async function getclientUser(req, res) {
     // 1. Get Base RBAC Filter (Assignment Logic)
     const userFilter = await RBACFilterService.getUserFilter(req.user, "getUser");
 
+    // ✅ FIX 1: Dynamic Role Exclusion (Updated)
+    // Zonal Admin (6) is permanently hidden from everyone.
+    // Admin (2) is hidden from standard users, but visible to high-level admins.
+    const hiddenRoles = (loggedInUserRole === 1 || loggedInUserRole === 2) 
+      ? [6]       // Top-level admins see everyone EXCEPT Zonal Admins
+      : [2, 6];   // Everyone else has Admins and Zonal Admins hidden
+
     // 2. Base Where
     const baseWhere = { 
       deleted_at: null,
-      role_id: { notIn: [2, 6, 7] }, // Hide Admin, Zonal Admin, Facility Supv
-      // ✅ FIX 1: Use an AND array immediately so we can stack conditions safely
+      role_id: { notIn: hiddenRoles }, // Apply the dynamic hidden roles
       AND: [
         { id: { not: loggedInUserId } } // Never show the logged-in user to themselves
       ]
@@ -64,7 +70,6 @@ export async function getclientUser(req, res) {
     }
 
     // ✅ FIX 2: Merge Assignment logic with "Created By" logic
-    // We only apply this OR logic for roles like Supervisor (3) or Facility Admin (8)
     if (loggedInUserRole === 3 || loggedInUserRole === 8) {
       baseWhere.AND.push({
         OR: [
@@ -97,6 +102,14 @@ export async function getclientUser(req, res) {
           { phone: { contains: search, mode: 'insensitive' } }
         ]
       });
+    }
+
+    // Safely clean up the AND array if it's empty to prevent Prisma syntax errors
+    if (mainWhere.AND.length === 0) {
+      delete mainWhere.AND;
+    }
+    if (baseWhere.AND && baseWhere.AND.length === 0) {
+      delete baseWhere.AND;
     }
 
     // 4. Execute Queries
