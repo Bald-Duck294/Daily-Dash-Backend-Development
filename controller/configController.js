@@ -1,5 +1,8 @@
 import prisma from "../config/prismaClient.mjs";
-import { validateUsageCategory } from "../utils/configValidator.js";
+import {
+  validateUsageCategory,
+  validateAdditionalFeatures,
+} from "../utils/configValidator.js";
 import { DYNAMIC_MODULES } from "../utils/configRegistry.js";
 // Safe JSON Serialization Utility for BigInt structural bounds
 function convertBigInts(obj) {
@@ -114,15 +117,19 @@ export async function updateConfigByRouteName(req, res) {
   const { name } = req.params;
   const { description, company_id, is_active, notes } = req.body;
 
-  console.log("Update request for config name:", name);
-  // Validation
+  // Branching Validation based on Module Name
   if (name === "LOCATION_USAGE_CATEGORY") {
     const validation = validateUsageCategory(description);
-    if (!validation.isValid) {
+    if (!validation.isValid)
       return res
         .status(422)
         .json({ status: "error", message: validation.reason });
-    }
+  } else if (name === "LOCATION_ADDITIONAL_FEATURES") {
+    const validation = validateAdditionalFeatures(description);
+    if (!validation.isValid)
+      return res
+        .status(422)
+        .json({ status: "error", message: validation.reason });
   }
 
   const targetedCompanyId = company_id ? BigInt(company_id) : null;
@@ -169,65 +176,82 @@ export async function updateConfigByRouteName(req, res) {
       .json({ status: "error", message: "Failed to update configuration." });
   }
 }
+
 /**
  * Route 4: GET /api/configurations/location-schema
  * Aggregates multiple configuration modules into a single schema for the frontend
  */
 export async function getLocationSchema(req, res) {
   const companyId = req.query.company_id || req.query.companyId;
+  const targetedCompanyId = companyId ? BigInt(companyId) : null;
 
   try {
-    // 1. Fetch Phase 1 Config (Usage Categories)
-    let metricsRecord = null;
+    // 1. Fetch Usage Category
+    const usageConfig = await prisma.configurations.findFirst({
+      where: {
+        name: "LOCATION_USAGE_CATEGORY",
+        is_active: true,
+        OR: targetedCompanyId
+          ? [{ company_id: targetedCompanyId }, { company_id: null }]
+          : [{ company_id: null }],
+      },
+      orderBy: { company_id: "asc" },
+    });
 
-    if (companyId) {
-      metricsRecord = await prisma.configurations.findFirst({
-        where: {
-          name: "LOCATION_USAGE_CATEGORY",
-          company_id: BigInt(companyId),
-          is_active: true,
-        },
-      });
+    // 2. Fetch Additional Features
+    const featuresConfig = await prisma.configurations.findFirst({
+      where: {
+        name: "LOCATION_ADDITIONAL_FEATURES",
+        is_active: true,
+        OR: targetedCompanyId
+          ? [{ company_id: targetedCompanyId }, { company_id: null }]
+          : [{ company_id: null }],
+      },
+      orderBy: { company_id: "asc" },
+    });
+
+    // Process Usage Categories
+    let formattedUsageCategories = [];
+    if (usageConfig?.description?.categories) {
+      formattedUsageCategories = usageConfig.description.categories.map(
+        (category) => ({
+          id: category.id,
+          label: category.label,
+          entities: (category.entities || []).map((entity) => ({
+            id: entity.id,
+            label: entity.label,
+            isAiScoringEnabled: entity.isAiScoringEnabled,
+            defaultValue: 0,
+          })),
+        }),
+      );
     }
 
-    if (!metricsRecord) {
-      metricsRecord = await prisma.configurations.findFirst({
-        where: {
-          name: "LOCATION_USAGE_CATEGORY",
-          company_id: null,
-          is_active: true,
-        },
-      });
+    // Process Additional Features
+    let formattedAdditionalFeatures = [];
+    if (featuresConfig?.description?.categories) {
+      const sortedCategories = [...featuresConfig.description.categories].sort(
+        (a, b) => a.sortOrder - b.sortOrder,
+      );
+
+      formattedAdditionalFeatures = sortedCategories.map((category) => ({
+        id: category.id,
+        label: category.label,
+        sortOrder: category.sortOrder,
+        fields: (category.fields || [])
+          .sort((a, b) => a.sortOrder - b.sortOrder)
+          .map((field) => ({
+            key: field.key,
+            type: field.type,
+            label: field.label,
+            defaultValue:
+              field.defaultValue ?? (field.type === "boolean" ? false : null),
+            options: field.options || undefined,
+            visibleWhen: field.visibleWhen || undefined,
+          })),
+      }));
     }
 
-    // STRICT ERROR: No silent fallbacks
-    if (!metricsRecord || !metricsRecord.description) {
-      return res.status(404).json({
-        status: "error",
-        message:
-          "Missing 'LOCATION_USAGE_CATEGORY' configuration. Please initialize it in the admin dashboard.",
-      });
-    }
-
-    // 2. Format Usage Categories (Preserve metadata, inject defaultValue)
-    const rawCategories = metricsRecord.description.categories || [];
-
-    const formattedUsageCategories = rawCategories.map((category) => ({
-      id: category.id,
-      label: category.label,
-      entities: (category.entities || []).map((entity) => ({
-        id: entity.id,
-        label: entity.label,
-        isAiScoringEnabled: entity.isAiScoringEnabled,
-        defaultValue: 0, // Injected for frontend form initialization
-      })),
-    }));
-
-    // 3. Placeholder for Phase 2 (LOCATION_ADDITIONAL_FEATURES)
-    // When Phase 2 is built, we will fetch it here and populate this array.
-    const formattedAdditionalFeatures = [];
-
-    // 4. Return aggregated schema
     return res.status(200).json({
       status: "success",
       data: {

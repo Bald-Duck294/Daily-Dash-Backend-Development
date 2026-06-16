@@ -166,6 +166,7 @@ model users {
   avatar_url                        String?
   google_id                         String?               @unique
   facility_company_id               BigInt?
+  created_by                        BigInt?
   activity_logs                     activity_logs[]
   cleaner_assignments_as_cleaner    cleaner_assignments[] @relation("CleanerUser")
   cleaner_assignments_as_supervisor cleaner_assignments[] @relation("Supervisor")
@@ -176,6 +177,8 @@ model users {
   sessions                          sessions[]
   shift_assignments                 shift_assignments[]
   user_review                       user_review[]
+  users                             users?                @relation("usersTousers", fields: [created_by], references: [id], map: "fk_users_created_by")
+  other_users                       users[]               @relation("usersTousers")
   companies                         companies?            @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   facility_companies                facility_companies?   @relation(fields: [facility_company_id], references: [id])
   role                              Role?                 @relation(fields: [role_id], references: [id])
@@ -424,5 +427,7 @@ model odor_readings {
   nh3_value  Int?
   status     String?   @db.VarChar(20)
   fan_status String?   @db.VarChar(10)
-  created_at DateTime? @default(now()) @db.Timestamp(6)
+  created_at DateTime? @default(now()) @db.Timestamptz(6)
+  air_status String?   @db.VarChar(50)
+  wifi_rssi  Int?
 }
