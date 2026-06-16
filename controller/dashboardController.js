@@ -321,9 +321,10 @@ export const getWeeklyCleanerPerformance = async (req, res) => {
 //     }
 // };
 
-export const getTopRatedLocations = async (req, res) => {
+export const getAllLocationsScores = async (req, res) => {
   try {
-    const { companyId, limit = 5, date } = req.query;
+    // Removed the 'limit' destructuring
+    const { companyId, date } = req.query;
     const user = req.user;
 
     const roleFilter = await RBACFilterService.getLocationFilter(
@@ -331,7 +332,6 @@ export const getTopRatedLocations = async (req, res) => {
       "dashboard",
     );
 
-    // console.log(roleFilter, "role filter top rated locations")
     // Date range for today's scores
     const startOfDay = new Date(date || new Date());
     startOfDay.setHours(0, 0, 0, 0);
@@ -346,7 +346,6 @@ export const getTopRatedLocations = async (req, res) => {
       ...roleFilter,
     };
 
-    // console.log(locationWhereClause, "location where clause top rated locations")
     // ✅ Step 1: Get ALL locations (with RBAC filter)
     const allLocations = await prisma.locations.findMany({
       where: locationWhereClause,
@@ -364,7 +363,6 @@ export const getTopRatedLocations = async (req, res) => {
       },
     });
 
-    // console.log(allLocations, "all locations with scores")
     // ✅ Step 2: Calculate score for each location (0 if no scores for that day)
     const locationsWithScores = allLocations.map((loc) => {
       const scores = loc.hygiene_scores.map((hs) => Number(hs.score));
@@ -385,24 +383,22 @@ export const getTopRatedLocations = async (req, res) => {
       };
     });
 
-    // ✅ Step 3: Sort by score DESC and take top N
-    const topLocations = locationsWithScores
-      .sort((a, b) => {
-        // Sort by score descending
-        if (b.currentScore !== a.currentScore) {
-          return b.currentScore - a.currentScore;
-        }
-        // If same score, any order is fine (natural order)
-        return 0;
-      })
-      .slice(0, parseInt(limit));
+    // ✅ Step 3: Sort by score DESC (Returns ALL washrooms, limit is removed)
+    const sortedLocations = locationsWithScores.sort((a, b) => {
+      // Sort by score descending
+      if (b.currentScore !== a.currentScore) {
+        return b.currentScore - a.currentScore;
+      }
+      // If same score, natural order is fine
+      return 0;
+    });
 
     res.json({
       success: true,
-      data: topLocations,
+      data: sortedLocations,
     });
   } catch (error) {
-    console.error("Top locations error:", error);
+    console.error("All locations error:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 };

@@ -549,9 +549,72 @@ export async function getConfigurationByName(req, res) {
   }
 }
 
-// ✅ Toggle Configuration Status (Activate/Deactivate)
-export async function toggleConfigurationStatus(req, res) {
-  const { id } = req.params;
+// ✅ Get Configuration by Name (Your existing one - enhanced)
+// export async function getConfigurationByName(req, res) {
+//   console.log('Get config by name');
+//   const { name } = req.params;
+//   const { company_id } = req.query;
+//   console.log(name, "name from the request");
+//   console.log(company_id, "company_id from the request");
+
+//   if (!name) {
+//     return res.status(400).json({
+//       status: "error",
+//       message: "Missing 'name' in request parameters.",
+//     });
+//   }
+
+//   try {
+//     console.log(`Fetching configuration with name: ${name}`);
+
+//     const whereClause = { name: name };
+
+//     // If company_id is provided, prioritize company-specific config
+//     if (company_id) {
+//       whereClause.company_id = BigInt(company_id);
+//     }
+
+//     let config = await prisma.configurations.findMany({
+//       where: whereClause,
+//     });
+
+//     // If no company-specific config found and company_id was provided,
+//     // fallback to global config (company_id = null)
+//     if ((!config || config.length === 0) && company_id) {
+//       config = await prisma.configurations.findMany({
+//         where: {
+//           name: name,
+//           company_id: null
+//         },
+//       });
+//     }
+
+//     if (!config || config.length === 0) {
+//       return res.status(404).json({
+//         status: "error",
+//         message: `Configuration with name '${name}' not found.`,
+//       });
+//     }
+
+//     const safeConfig = convertBigInts(config);
+
+//     res.json({
+//       status: "success",
+//       data: safeConfig,
+//       message: "Data retrieved successfully!",
+//     });
+//   } catch (error) {
+//     console.error("Error fetching configuration:", error);
+//     res.status(500).json({
+//       status: "error",
+//       message: "Internal server error."
+//     });
+//   }
+// }
+
+// ✅ Create Configuration
+export async function createConfiguration(req, res) {
+  const { name, description, company_id, is_active, notes } = req.body;
 
   if (!id) {
     return res.status(400).json({

@@ -1,446 +1,261 @@
 import prisma from "../config/prismaClient.mjs";
 
-// services/rbacFilterService.js
 const ROLES = {
   SUPER_ADMIN: 1,
   ADMIN: 2,
   SUPERVISOR: 3,
   FELLOW: 4,
-  CLEANER: 5
+  CLEANER: 5,
+  ZONAL_ADMIN: 6,
+  FACILITY_SUPV: 7,
+  FACILITY_ADMIN: 8
+};
+
+const flattenLocationTree = (locations) => {
+  let ids = [];
+  for (const location of locations) {
+    ids.push(location.id);
+    if (location.other_locations && location.other_locations.length > 0) {
+      ids = [...ids, ...flattenLocationTree(location.other_locations)];
+    }
+  }
+  return ids;
 };
 
 class RBACFilterService {
 
-  static async getLocationFilter(user, type,) {
-    // Null check
-    // console.log(user, "user from get loc filter")
-    if (!user) {
-      return { id: -1 };  // No access
-    }
-
+  // ==========================================
+  // 1. GET LOCATION FILTER (Globally Fixed)
+  // ==========================================
+  static async getLocationFilter(user, type) {
+    if (!user) return { id: -1 }; 
 
     const { role_id, company_id, id: user_id } = user;
 
+    if (role_id === ROLES.SUPER_ADMIN) return {};
+    if (role_id === ROLES.ADMIN) return { company_id };
 
-    // Super Admin - see everything
-    if (role_id === ROLES.SUPER_ADMIN) {
-      return {};
-    }
-
-    // Admin - see own company only
-    if (role_id === ROLES.ADMIN) {
-      return { company_id };
-    }
-
-
-    // Supervisor/Fellow/Cleaner - only assigned locations
     try {
-      const assignments = await prisma.cleaner_assignments.findMany({
-        where: {
-          cleaner_user_id: user_id,
-          released_on: null,
-          status: 'assigned'
-          // NOT: {
-          //   role_id: role_id
-          // }
-        },
+      // ✅ Now it uses your main authorization function, which supports BOTH Locations and Zones!
+      const authorizedIds = await this.getAuthorizedLocationIds(user_id, company_id);
 
-        select: { location_id: true }
-      });
-
-      const locationIds = assignments.map(a => a.location_id).filter(Boolean);
-
-      if (locationIds.length === 0) {
-        return { id: -1 };  // No assignments
+      if (authorizedIds.length === 0) {
+        return { id: -1 }; 
       }
 
       if (type === "cleaner_activity") {
-        return { location_id: { in: locationIds } };  // ← IN operator
+        return { location_id: { in: authorizedIds } }; 
+      } else if (type === "user_activity") {
+        return { toilet_id: { in: authorizedIds } };
+      } else {
+        return { id: { in: authorizedIds } }; 
       }
-      else if (type === "user_activity") {
-        return { toilet_id: { in: locationIds } }
-      }
-      else {
-        return { id: { in: locationIds } };  // ← IN operator
-
-      }
-
     } catch (error) {
       console.error('Error in getLocationFilter:', error);
-      return { id: -1 };  // Fail safe
+      return { id: -1 }; 
     }
   }
 
-  // static async getUserFilter(currentUser) {
-  //   // Null check
-  //   if (!currentUser) {
-  //     return { id: -1 };  // No access
-  //   }
+  // ==========================================
+  // 2. GET USER FILTER (Fixed for Sub-Zones)
+  // ==========================================
+static async getUserFilter(currentUser) {
+    // Return empty array instead of -1 to prevent UI bugs
+    if (!currentUser) return { id: { in: [] } };
 
-  //   const { role_id, id: user_id } = currentUser;
+    const { role_id, company_id, id: rawUserId } = currentUser;
+    
+    // ✅ CRITICAL FIX: Cast incoming user ID to BigInt to prevent Prisma crashes
+    const userId = BigInt(rawUserId);
 
-  //   // Super Admin - see everything
-  //   if (role_id === ROLES.SUPER_ADMIN) {
-  //     return {};
-  //   }
+    if (role_id === ROLES.SUPER_ADMIN) return {};
+    if (role_id === ROLES.ADMIN) return { company_id };
 
-
-  //   if (role_id === ROLES.ADMIN) {
-  //     return {};
-  //   }
-
-  //   if (role_id === ROLES.SUPERVISOR) {
-  //     try {
-  //       const supervisorAssignments = await prisma.cleaner_assignments.findMany({
-  //         where: {
-  //           cleaner_user_id: user_id,
-  //           released_on: null
-  //         },
-  //         select: { location_id: true }
-  //       });
-
-  //       const supervisorLocationIds = supervisorAssignments
-  //         .map(a => a.location_id)
-  //         .filter(Boolean);
-
-  //       if (supervisorLocationIds.length === 0) {
-  //         return { id: -1 };  // No locations assigned to supervisor
-  //       }
-
-  //       const cleanerAssignments = await prisma.cleaner_assignments.findMany({
-  //         where: {
-  //           location_id: { in: supervisorLocationIds },
-  //           released_on: null
-  //         },
-  //         select: { cleaner_user_id: true }
-  //       });
-
-  //       const cleanerUserIds = [...new Set(
-  //         cleanerAssignments.map(a => a.cleaner_user_id).filter(Boolean)
-  //       )];
-
-  //       if (cleanerUserIds.length === 0) {
-  //         return { id: -1 };  // No cleaners in supervisor's locations
-  //       }
-
-  //       // Step 3: Return filter for user IDs
-  //       return { id: { in: cleanerUserIds } };
-
-  //     } catch (error) {
-  //       console.error('Error in getUserFilter:', error);
-  //       return { id: -1 };
-  //     }
-  //   }
-
-  //   return {};
-  // }
-
-  // static async getUserFilter(currentUser, type) {
-
-  //   if (currentUser) {
-  //     return { id: -1 }
-  //   }
-
-  //   if (currentUser.role_id = ROLES.SUPER_ADMIN) {
-  //     return {};
-  //   }
-
-  //   if (currentUser.role_id === ROLES.ADMIN) {
-  //     return {}
-  //   }
-
-  //   if (currentUser.role_id === ROLES.SUPERVISOR) {
-
-  //     const supervisorData = await prisma.cleaner_assignments.findMany({
-  //       where: {
-  //         cleaner_user_id: currentUser?.id,
-  //         company_id: currentUser?.company_id,
-  //         role_id: currentUser?.role_id
-  //       }
-  //     })
-  //   }
-
-  //   supervisorLocationId = supervisorData.map((item) => item.location_id);
-
-  //   if (supervisorLocationId) {
-  //     return {
-  //       success: false,
-  //       message: 'No assignment found'
-  //     }
-  //   }
-
-  //   const cleanerData = await prisma.cleaner_assignments.findMany({
-  //     where: {
-  //       location_id: { in: supervisorLocationId }
-  //     }
-  //   })
-
-  //   const cleaner_user_id = cleanerData.map((item) => item.cleaner_user_id);
-
-
-  //   if (type == 'getUser') {
-  //     return { id: { in: cleaner_user_id } }
-  //   }
-  //   else {
-  //     return { id: { in: cleaner_user_id } }
-  //   }
-
-
-
-  // }
-
-  // static async getUserFilter(currentUser) {
-  //   // Null check
-  //   if (!currentUser) {
-  //     return { id: -1 };  // No access
-  //   }
-
-  //   const { role_id, company_id, id: user_id } = currentUser;
-
-  //   // Super Admin - see all users
-  //   if (role_id === ROLES.SUPER_ADMIN) {
-  //     return {};
-  //   }
-
-  //   // Admin - see all users in their company
-  //   if (role_id === ROLES.ADMIN) {
-  //     return { company_id };  // Filter by company
-  //   }
-
-  //   // Supervisor - see only cleaners assigned to their locations
-  //   if (role_id === ROLES.SUPERVISOR) {
-  //     try {
-  //       // Step 1: Get supervisor's assigned locations
-  //       const supervisorAssignments = await prisma.cleaner_assignments.findMany({
-  //         where: {
-  //           cleaner_user_id: user_id,
-  //           released_on: null,
-  //           deleted_at: null  // Respect soft delete
-  //         },
-  //         select: { location_id: true }
-  //       });
-
-  //       const supervisorLocationIds = supervisorAssignments
-  //         .map(a => a.location_id)
-  //         .filter(Boolean);
-
-  //       if (supervisorLocationIds.length === 0) {
-  //         return { id: -1 };  // No locations assigned
-  //       }
-
-  //       // Step 2: Find all users assigned to those same locations
-  //       const usersInSameLocations = await prisma.cleaner_assignments.findMany({
-  //         where: {
-  //           location_id: { in: supervisorLocationIds },
-  //           released_on: null,
-  //           deleted_at: null
-  //         },
-  //         select: { cleaner_user_id: true }
-  //       });
-
-  //       const userIds = [...new Set(
-  //         usersInSameLocations.map(a => a.cleaner_user_id).filter(Boolean)
-  //       )];
-
-  //       if (userIds.length === 0) {
-  //         return { id: -1 };
-  //       }
-
-  //       // Return filter: show users in supervisor's locations + supervisor themselves
-  //       return {
-  //         id: {
-  //           in: [...userIds, user_id]  // Include supervisor in results
-  //         }
-  //       };
-
-  //     } catch (error) {
-  //       console.error('Error in getUserFilter:', error);
-  //       return { id: -1 };
-  //     }
-  //   }
-
-  //   // Other roles (Facility Admin, Facility Supervisor, etc.)
-  //   // They see only users in their assigned locations
-  //   try {
-  //     // Get their assigned locations
-  //     const assignments = await prisma.cleaner_assignments.findMany({
-  //       where: {
-  //         cleaner_user_id: user_id,
-  //         released_on: null,
-  //         deleted_at: null
-  //       },
-  //       select: { location_id: true }
-  //     });
-
-  //     const locationIds = assignments.map(a => a.location_id).filter(Boolean);
-
-  //     if (locationIds.length === 0) {
-  //       return { id: user_id };  // Only see themselves
-  //     }
-
-  //     // Find all users in the same locations
-  //     const usersInLocations = await prisma.cleaner_assignments.findMany({
-  //       where: {
-  //         location_id: { in: locationIds },
-  //         released_on: null,
-  //         deleted_at: null
-  //       },
-  //       select: { cleaner_user_id: true }
-  //     });
-
-  //     const userIds = [...new Set(
-  //       usersInLocations.map(a => a.cleaner_user_id).filter(Boolean)
-  //     )];
-
-  //     return {
-  //       id: {
-  //         in: userIds.length > 0 ? userIds : [user_id]
-  //       }
-  //     };
-
-  //   } catch (error) {
-  //     console.error('Error in getUserFilter:', error);
-  //     return { id: user_id };  // Fail-safe: only see themselves
-  //   }
-  // }
-
-  static async getUserFilter(currentUser) {
-    // Null check
-    if (!currentUser) return { id: -1 };
-
-    const { role_id, company_id, id: userId } = currentUser;
-
-    // ✅ Role 1: Super Admin - see all users
-    if (role_id === 1) {
-      return {}; // No filter
-    }
-
-    // ✅ Role 2: Admin - see all users in their company
-    if (role_id === 2) {
-      return { company_id };
-    }
-
-    // ✅ Role 6: Zonal Admin - Get type_id, find locations, find users
-    if (role_id === 6) {
+    if (role_id === ROLES.ZONAL_ADMIN) {
       try {
-        // Get type_id (zone) assigned to this Zonal Admin
         const assignments = await prisma.cleaner_assignments.findMany({
-          where: {
-            cleaner_user_id: userId,
-            released_on: null,
-            deleted_at: null
-          },
+          where: { cleaner_user_id: userId, released_on: null, deleted_at: null },
           select: { type_id: true }
         });
 
         const typeIds = [...new Set(assignments.map(a => a.type_id).filter(Boolean))];
+        
+        // ✅ FIX: Return empty array instead of self if no zones exist
+        if (typeIds.length === 0) return { id: { in: [] } };
 
-        if (typeIds.length === 0) {
-          return { id: userId };
-        }
+        // Fetch sub-zones so Zonal Admin sees users in child zones
+        const subZones = await prisma.location_types.findMany({
+          where: { parent_id: { in: typeIds } },
+          select: { id: true }
+        });
+        const allAllowedTypeIds = [...typeIds, ...subZones.map(z => z.id)];
 
-        // Get all locations with these type_ids
         const locationsInZone = await prisma.locations.findMany({
-          where: {
-            type_id: { in: typeIds },
-            company_id,
-            deleted_at: null
-          },
+          where: { type_id: { in: allAllowedTypeIds }, company_id, deleted_at: null },
           select: { id: true }
         });
 
         const locationIds = locationsInZone.map(loc => loc.id);
+        
+        // ✅ FIX: Return empty array instead of self
+        if (locationIds.length === 0) return { id: { in: [] } };
 
-        if (locationIds.length === 0) {
-          return { id: userId };
-        }
-
-        // Get all users assigned to those locations
         const usersInLocations = await prisma.cleaner_assignments.findMany({
-          where: {
-            location_id: { in: locationIds },
-            released_on: null,
-            deleted_at: null
-          },
+          where: { location_id: { in: locationIds }, released_on: null, deleted_at: null },
           select: { cleaner_user_id: true }
         });
 
-        const userIds = [...new Set(usersInLocations.map(a => a.cleaner_user_id))];
+        // ✅ FIX: Ensure the logged-in Zonal Admin is filtered out of the results
+        const userIds = [...new Set(usersInLocations.map(a => a.cleaner_user_id))].filter(id => id !== userId);
+        return { id: { in: userIds } };
 
-        return {
-          id: { in: userIds.length > 0 ? [...userIds, userId] : [userId] }
-        };
       } catch (error) {
         console.error('Error in getUserFilter for Zonal Admin:', error);
-        return { id: userId };
+        return { id: { in: [] } };
       }
     }
 
-    // ✅ Role 3, 7, 8: Supervisor, Facility Supervisor, Facility Admin
-    // ALL use the same logic - get assigned locations, find users
-
-    if (role_id === 3 || role_id === 7 || role_id === 8) {
+    if (role_id === ROLES.SUPERVISOR || role_id === ROLES.FACILITY_SUPV || role_id === ROLES.FACILITY_ADMIN) {
       try {
-        // Get locations assigned to this user
-        const whereClause = {
-          released_on: null,
-          deleted_at: null
-        }
+        const whereClause = { released_on: null, deleted_at: null };
+        whereClause.role_id = role_id === ROLES.FACILITY_ADMIN ? { in: [5, 7] } : { in: [5] };
 
-        if (role_id === 8) {
-          whereClause.role_id = { in: [5, 7] }
-        }
-        else {
-          whereClause.role_id = { in: [5] }
-        }
-
-        // console.log("finalwhereClause", whereClause);
         const assignments = await prisma.cleaner_assignments.findMany({
-          where: {
-            cleaner_user_id: userId,
-            released_on: null,
-            deleted_at: null,
-            status: 'assigned'
-          },
+          where: { cleaner_user_id: userId, released_on: null, deleted_at: null, status: 'assigned' },
           select: { location_id: true }
         });
 
         const locationIds = assignments.map(a => a.location_id).filter(Boolean);
+        
+        // ✅ FIX: Return empty array instead of self
+        if (locationIds.length === 0) return { id: { in: [] } };
+        
+        whereClause.location_id = { in: locationIds };
 
-        if (locationIds.length === 0) {
-          return { id: userId }; // No locations assigned yet
-        }
-        else {
-          whereClause.location_id = { in: locationIds }
-        }
-
-        // Get all users assigned to those SAME locations
         const usersInLocations = await prisma.cleaner_assignments.findMany({
           where: whereClause,
           select: { cleaner_user_id: true }
         });
 
-        const userIds = [...new Set(usersInLocations.map(a => a.cleaner_user_id))];
-
-        return {
-          id: { in: userIds.length > 0 ? [...userIds, userId] : [userId] }
-        };
+        // ✅ FIX: Ensure the logged-in Supervisor/Admin is filtered out of the results
+        const userIds = [...new Set(usersInLocations.map(a => a.cleaner_user_id))].filter(id => id !== userId);
+        return { id: { in: userIds } };
+        
       } catch (error) {
         console.error('Error in getUserFilter:', error);
-        return { id: userId };
+        return { id: { in: [] } };
       }
     }
 
-    // ✅ Role 5: Cleaner - only see themselves
-    if (role_id === 5) {
-      return { id: userId };
-    }
-
-    // ✅ Default: Only see themselves
-    return { id: userId };
+    // Default fallback
+    return { id: { in: [] } };
   }
 
+  // ==========================================
+  // 3. GET ZONE FILTER
+  // ==========================================
+  static async getZoneFilter(user) {
+    if (user.role_id === ROLES.SUPER_ADMIN || user.role_id === ROLES.ADMIN) {
+      return {}; 
+    }
+    // If Zonal Admin, only show zones they are assigned to
+    if (user.role_id === ROLES.ZONAL_ADMIN) {
+        const assignments = await prisma.cleaner_assignments.findMany({
+            where: { cleaner_user_id: BigInt(user.id), status: 'assigned', type_id: { not: null } },
+            select: { type_id: true }
+        });
+        const assignedZoneIds = assignments.map(a => a.type_id);
+        if(assignedZoneIds.length > 0) return { id: { in: assignedZoneIds } };
+        else return { id: -1 };
+    }
+    return {}; 
+  }
 
+  // ==========================================
+  // 4. GET AUTHORIZED LOCATION IDS (The Engine)
+  // ==========================================
+  static async getAuthorizedLocationIds(userId, companyId) {
+    const assignments = await prisma.cleaner_assignments.findMany({
+      where: { 
+        cleaner_user_id: BigInt(userId),
+        company_id: BigInt(companyId),
+        status: 'assigned',
+        deleted_at: null
+      },
+      select: { location_id: true, type_id: true }
+    });
+
+    if (assignments.length === 0) return [];
+
+    const locationIds = assignments.map(a => a.location_id).filter(id => id !== null);
+    const typeIds = assignments.map(a => a.type_id).filter(id => id !== null);
+
+    let authorizedIds = [];
+
+    // --- 1. PROCESS NODE-BASED ASSIGNMENTS ---
+    if (locationIds.length > 0) {
+      const nodeLocations = await prisma.locations.findMany({
+        where: { id: { in: locationIds }, deleted_at: null },
+        select: {
+          id: true,
+          other_locations: { 
+            where: { deleted_at: null },
+            select: {
+              id: true,
+              other_locations: { 
+                where: { deleted_at: null },
+                select: { 
+                  id: true, 
+                  other_locations: { 
+                    where: { deleted_at: null },
+                    select: { id: true } 
+                  } 
+                } 
+              }
+            }
+          }
+        }
+      });
+      authorizedIds = [...authorizedIds, ...flattenLocationTree(nodeLocations)];
+    }
+
+    // --- 2. PROCESS TYPE-BASED ASSIGNMENTS (ZONES) ---
+    if (typeIds.length > 0) {
+      // ✅ NEW: Fetch sub-zones. If assigned to Nagpur, also fetch Dighori's locations.
+      const subZones = await prisma.location_types.findMany({
+        where: { parent_id: { in: typeIds } },
+        select: { id: true }
+      });
+      const subZoneIds = subZones.map(z => z.id);
+      const allAllowedTypeIds = [...typeIds, ...subZoneIds];
+
+      const typeLocations = await prisma.locations.findMany({
+        where: { type_id: { in: allAllowedTypeIds }, company_id: BigInt(companyId), deleted_at: null },
+        select: {
+          id: true,
+          other_locations: { 
+            where: { deleted_at: null },
+            select: {
+              id: true,
+              other_locations: { 
+                where: { deleted_at: null },
+                select: { 
+                  id: true, 
+                  other_locations: { 
+                    where: { deleted_at: null },
+                    select: { id: true } 
+                  } 
+                } 
+              }
+            }
+          }
+        }
+      });
+      authorizedIds = [...authorizedIds, ...flattenLocationTree(typeLocations)];
+    }
+
+    return [...new Set(authorizedIds)]; 
+  }
 }
 
 export default RBACFilterService;

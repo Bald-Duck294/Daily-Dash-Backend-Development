@@ -2,7 +2,7 @@
 import express from "express";
 import {
   getDashboardCounts,
-  getTopRatedLocations,
+  getAllLocationsScores,
   getTodaysActivities,
   getWashroomScoresSummary,
   getWeeklyCleanerPerformance,
@@ -11,7 +11,7 @@ import { verifyToken } from "../middlewares/authMiddleware.js";
 const dashboardRoutes = express.Router();
 
 dashboardRoutes.get("/counts", verifyToken, getDashboardCounts);
-dashboardRoutes.get("/top-locations", verifyToken, getTopRatedLocations);
+dashboardRoutes.get("/top-locations", verifyToken, getAllLocationsScores);
 dashboardRoutes.get("/activities", verifyToken, getTodaysActivities);
 dashboardRoutes.get(
   "/graph-washroom-scores",
