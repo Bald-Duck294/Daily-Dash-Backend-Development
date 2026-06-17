@@ -655,19 +655,34 @@ export async function getUserById(req, res) {
 // };
 
 export const createUser = async (req, res) => {
-
-
   try {
     const { password, location_ids = [], company_id, ...data } = req.body;
 
     if (!password) return res.status(400).json({ message: "Password is required" });
-    if (!company_id) return res.status(400).json({ message: "Company ID is required" });
 
-   
+    // Check if the user being created is a superadmin
+    const isCreatingSuperAdmin = parseInt(data.role_id) === 1;
+
+    // Enforce company_id requirement if they are NOT a superadmin
+    if (!company_id && !isCreatingSuperAdmin) {
+      return res.status(400).json({ message: "Company ID is required" });
+    }
+
+    // Fix for Age
+    if (data.age === "") {
+      data.age = null;
+    } else if (data.age) {
+      data.age = parseInt(data.age, 10);
+    }
+
+    // 🆕 Fix for Email (Convert empty string to null to prevent P2002 duplicate errors)
+    if (data.email === "") {
+      data.email = null;
+    }
 
     const currentUser = req.user; 
     
-    // 🔴 2. Check multiple possible locations for role_id just in case it's nested
+    // Check multiple possible locations for role_id
     const currentRoleId = currentUser?.role_id 
       || currentUser?.role?.id 
       || currentUser?.user?.role_id;
@@ -676,7 +691,6 @@ export const createUser = async (req, res) => {
 
     const isSupervisor = parseInt(currentRoleId) === 3;
   
-
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const serializeBigInt = (obj) => {
@@ -687,32 +701,42 @@ export const createUser = async (req, res) => {
       );
     };
 
-    // 🔴 3. Explicitly grab the user ID (handling nesting if necessary)
     const currentUserId = currentUser?.id || currentUser?.user?.id;
 
     const newUser = await prisma.users.create({
       data: {
         ...data,
         password: hashedPassword,
-        company_id: BigInt(company_id), 
+        ...(company_id && { company_id: BigInt(company_id) }), 
         birthdate: data?.birthdate ? new Date(data.birthdate) : null,
-        // Inject created_by ONLY if they are a supervisor AND we have an ID
         ...(isSupervisor && currentUserId && { created_by: BigInt(currentUserId) }),
       },
       include: {},
     });
 
-
     const safeUser = serializeBigInt({
       ...newUser,
       id: newUser.id.toString(),
-      company_id: newUser.company_id?.toString(),
+      ...(newUser.company_id && { company_id: newUser.company_id.toString() }),
       ...(newUser.created_by && { created_by: newUser.created_by.toString() }),
     });
 
     res.status(201).json(safeUser);
   } catch (error) {
     console.error("Error in createUser:", error);
+
+    // 🆕 Catch the Prisma Unique Constraint error gracefully
+    if (error.code === 'P2002') {
+      const target = error.meta?.target || [];
+      if (target.includes('email')) {
+        return res.status(400).json({ message: "A user with this email already exists." });
+      }
+      if (target.includes('phone')) {
+        return res.status(400).json({ message: "A user with this phone number already exists." });
+      }
+      return res.status(400).json({ message: "A record with this information already exists." });
+    }
+
     res.status(500).json({ message: "Error creating user", error: error.message });
   }
 };
