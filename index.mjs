@@ -26,7 +26,7 @@ import shiftAssign_router from "./routes/shiftAssignRoutes.js";
 import dropdownlist_router from "./routes/dropdownlist.route.js";
 import getPhotoRoutes from "./routes/photoRoute.js";
 import iotRoutes from "./routes/iotRoutes.js";
-
+import getattendanceRoute from "./routes/attendanceRoute.js" 
 dotenv.config();
 
 const app = express();
@@ -86,6 +86,7 @@ app.use("/api/shifts", shift_router);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/shifts-assign", shiftAssign_router);
 app.use("/api/photo", getPhotoRoutes);
+app.use("/api/attendance", getattendanceRoute);
 app.use("/uploads", express.static("uploads"));
 // app.use("/api", registered_users_router);
 
