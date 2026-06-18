@@ -454,3 +454,75 @@ export const getRolesForDropdown = async (req, res) => {
     });
   }
 };
+
+export async function getAssignedCleanersForDropdown(req, res) {
+  try {
+    const { companyId, search } = req.query;
+
+    const userFilter = await RBACFilterService.getUserFilter(req.user, "getUser");
+
+    const whereClause = {
+      ...userFilter,
+      deleted_at: null,
+      role: { name: { equals: "cleaner", mode: "insensitive" } },
+      cleaner_assignments_as_cleaner: { some: {} } 
+    };
+
+    if (companyId) {
+      whereClause.company_id = BigInt(companyId);
+    }
+
+    if (search) {
+      whereClause.OR = [
+        { name: { contains: search, mode: "insensitive" } },
+        { email: { contains: search, mode: "insensitive" } },
+      ];
+    }
+
+    const cleaners = await prisma.users.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role_id: true,
+        role: { select: { name: true } },
+        cleaner_assignments_as_cleaner: {
+          select: {
+            locations: { select: { name: true } } 
+          }
+          // 🟢 REMOVED `take: 1` SO WE GET ALL LOCATIONS
+        }
+      },
+      orderBy: { name: "asc" },
+    });
+
+    const formattedCleaners = cleaners.map((cleaner) => {
+      // 🟢 THE FIX: Extract all location names into an array
+      const assignedLocations = cleaner.cleaner_assignments_as_cleaner
+        ?.map(a => a.locations?.name)
+        .filter(Boolean) || [];
+
+      return {
+        id: cleaner.id.toString(),
+        name: cleaner.name,
+        email: cleaner.email,
+        role_id: cleaner.role_id,
+        role_name: cleaner.role?.name || "Cleaner",
+        // 🟢 Pass the array of locations
+        locations: assignedLocations.length > 0 ? assignedLocations : ["Unassigned"] 
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      data: formattedCleaners,
+    });
+  } catch (error) {
+    console.error("Error fetching assigned cleaners for dropdown:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal Server Error fetching assigned cleaner dropdown.",
+    });
+  }
+}

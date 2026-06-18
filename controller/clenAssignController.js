@@ -158,7 +158,7 @@ export const getAllAssignments = async (req, res) => {
           select: { name: true } // Only get role name
         },
         cleaner_user: {
-          select: { name: true,  phone:true} // Only get user name and email
+          select: { name: true,  phone:true} // Only get user name and phone
         }
       }
     });

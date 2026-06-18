@@ -5,7 +5,8 @@ getUsersForDropdown,
 getCompaniesForDropdown,
 getCleanersForDropdown,
 getZonesForDropdown,
-getRolesForDropdown
+getRolesForDropdown,
+getAssignedCleanersForDropdown
 } from "../controller/dropdownlistController.js";
 import { verifyToken } from "../middlewares/authMiddleware.js";
 
@@ -16,6 +17,7 @@ dropdown_list_router.get("/location", verifyToken, getLocationsForDropdown);
 dropdown_list_router.get("/user", verifyToken, getUsersForDropdown);
 dropdown_list_router.get("/companies", verifyToken,getCompaniesForDropdown);
 dropdown_list_router.get("/cleaners", verifyToken,getCleanersForDropdown);
+dropdown_list_router.get("/assigned-cleaners", verifyToken,getAssignedCleanersForDropdown);
 dropdown_list_router.get("/zone", verifyToken,getZonesForDropdown);
 dropdown_list_router.get("/role", verifyToken,getRolesForDropdown);
 
