@@ -400,11 +400,11 @@ export const getRolesForDropdown = async (req, res) => {
     switch (currentRoleId) {
       case 1:
         // ✅ FIX: Superadmin can see everything BELOW Superadmin (Removed '1')
-        allowedRoleIds = [ 2, 8, 3,7, 5];
+        allowedRoleIds = [ 2, 8, 3, 5];
         break;
       case 2:
         // Admin: Can see everything BELOW Admin
-        allowedRoleIds = [ 8, 3, 7, 5];
+        allowedRoleIds = [ 8, 3, 5];
         break;
       case 6: // Zonal Admin
       case 8: // Facility Admin

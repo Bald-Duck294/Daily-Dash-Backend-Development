@@ -215,6 +215,54 @@ export const getWashroomScoresSummary = async (req, res) => {
 };
 
 // controllers/dashboardController.js
+// export const getWeeklyCleanerPerformance = async (req, res) => {
+//   try {
+//     const { companyId } = req.query;
+//     const user = req.user;
+
+//     // RBAC filter
+//     const roleFilter = await RBACFilterService.getLocationFilter(
+//       user,
+//       "dashboard",
+//     );
+
+//     // Generate last 7 days range
+//     const days = [];
+//     for (let i = 6; i >= 0; i--) {
+//       const d = new Date();
+//       d.setDate(d.getDate() - i);
+//       d.setHours(0, 0, 0, 0);
+//       days.push(d);
+//     }
+
+//     const performanceData = await Promise.all(
+//       days.map(async (day) => {
+//         const start = new Date(day);
+//         const end = new Date(day);
+//         end.setHours(23, 59, 59, 999);
+
+//         const count = await prisma.cleaner_review.count({
+//           where: {
+//             company_id: BigInt(companyId),
+//             status: "completed",
+//             updated_at: { gte: start, lte: end },
+//             ...(roleFilter.id && { location_id: roleFilter.id }),
+//           },
+//         });
+
+//         return {
+//           day: day.toLocaleDateString("en-US", { weekday: "short" }),
+//           date: day.toISOString().split("T")[0],
+//           count: count,
+//         };
+//       }),
+//     );
+
+//     res.json({ success: true, data: performanceData });
+//   } catch (error) {
+//     res.status(500).json({ success: false, error: error.message });
+//   }
+// };
 export const getWeeklyCleanerPerformance = async (req, res) => {
   try {
     const { companyId } = req.query;
@@ -235,12 +283,30 @@ export const getWeeklyCleanerPerformance = async (req, res) => {
       days.push(d);
     }
 
+    let totalTasks = 0;
+    let bestDayCount = -1;
+    let bestDayName = "N/A";
+
+    // Query total tasks (all statuses) for the 7-day window to calculate completion rate
+    const sevenDaysAgo = new Date(days[0]);
+    const endOfToday = new Date(days[6]);
+    endOfToday.setHours(23, 59, 59, 999);
+
+    const totalTasksCreated = await prisma.cleaner_review.count({
+      where: {
+        company_id: BigInt(companyId),
+        updated_at: { gte: sevenDaysAgo, lte: endOfToday },
+        ...(roleFilter.id && { location_id: roleFilter.id }),
+      },
+    });
+
     const performanceData = await Promise.all(
       days.map(async (day) => {
         const start = new Date(day);
         const end = new Date(day);
         end.setHours(23, 59, 59, 999);
 
+        // Count completed tasks for the specific day
         const count = await prisma.cleaner_review.count({
           where: {
             company_id: BigInt(companyId),
@@ -250,20 +316,45 @@ export const getWeeklyCleanerPerformance = async (req, res) => {
           },
         });
 
+        totalTasks += count;
+        const dayNameShort = day.toLocaleDateString("en-US", { weekday: "short" });
+        const dayNameLong = day.toLocaleDateString("en-US", { weekday: "long" });
+
+        // Determine Best Day
+        if (count > bestDayCount) {
+          bestDayCount = count;
+          bestDayName = dayNameLong;
+        }
+
         return {
-          day: day.toLocaleDateString("en-US", { weekday: "short" }),
+          day: dayNameShort,
           date: day.toISOString().split("T")[0],
           count: count,
         };
       }),
     );
 
-    res.json({ success: true, data: performanceData });
+    // Calculate aggregated stats
+    const averagePerDay = (totalTasks / 7).toFixed(1);
+    const completionRate = totalTasksCreated > 0 
+      ? Math.round((totalTasks / totalTasksCreated) * 100) 
+      : 0;
+
+    res.json({ 
+      success: true, 
+      data: performanceData,
+      stats: {
+        totalTasks,
+        averagePerDay: Number(averagePerDay),
+        bestDay: bestDayName,
+        bestDayCount,
+        completionRate
+      }
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 };
-
 // export const getTopRatedLocations = async (req, res) => {
 //     try {
 //         const { companyId, limit = 5, date } = req.query;
