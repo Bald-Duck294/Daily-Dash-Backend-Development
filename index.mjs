@@ -29,15 +29,32 @@ import dropdownlist_router from "./routes/dropdownlist.route.js";
 import getPhotoRoutes from "./routes/photoRoute.js";
 import iotRoutes from "./routes/iotRoutes.js";
 import getattendanceRoute from "./routes/attendanceRoute.js";
-import serviceAccount from "./safai-ai-firebase-adminsdk.json" with { type: "json" };
 import systemLimitsRouter from "./routes/systemLimitsRoutes.js";
 dotenv.config();
 
-if (getApps().length === 0) {
+// ✅ NAYA FIREBASE INITIALIZATION LOGIC (.env se read karega)
+const serviceAccount = {
+  type: process.env.FIREBASE_TYPE,
+  project_id: process.env.FIREBASE_PROJECT_ID,
+  private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
+  // This replace is super important to fix newline characters from .env
+  private_key: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+  client_email: process.env.FIREBASE_CLIENT_EMAIL,
+  client_id: process.env.FIREBASE_CLIENT_ID,
+  auth_uri: process.env.FIREBASE_AUTH_URI,
+  token_uri: process.env.FIREBASE_TOKEN_URI,
+  auth_provider_x509_cert_url: process.env.FIREBASE_AUTH_PROVIDER_CERT_URL,
+  client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL,
+  universe_domain: process.env.FIREBASE_UNIVERSE_DOMAIN,
+};
+
+// Check explicitly if we have the variables before initializing
+if (getApps().length === 0 && process.env.FIREBASE_PROJECT_ID) {
   initializeApp({
     credential: cert(serviceAccount),
   });
 }
+
 const app = express();
 app.use(express.json());
 
