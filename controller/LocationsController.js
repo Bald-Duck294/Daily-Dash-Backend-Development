@@ -867,7 +867,6 @@ export const getMapToilets = async (req, res) => {
 //   }
 // };
 
-
 export const getAllToilets = async (req, res) => {
   try {
     const user = req.user;
@@ -882,7 +881,7 @@ export const getAllToilets = async (req, res) => {
     const { company_id, type_id, include_unavailable } = req.query;
 
     const whereClause = {};
-    
+
     // 1. Apply default RBAC filter
     // Note: Ensure your RBACFilterService isn't overriding this for Zonal Admins incorrectly
     const roleFilter = await RBACFilterService.getLocationFilter(user);
@@ -898,42 +897,50 @@ export const getAllToilets = async (req, res) => {
       const zonalAssignments = await prisma.cleaner_assignments.findMany({
         where: {
           cleaner_user_id: BigInt(user.id),
-          status: 'assigned',
-          type_id: { not: null }
+          status: "assigned",
+          type_id: { not: null },
         },
-        select: { type_id: true }
+        select: { type_id: true },
       });
 
-      const assignedZoneIds = zonalAssignments.map(a => a.type_id);
+      const assignedZoneIds = zonalAssignments.map((a) => a.type_id);
 
       // If they are not assigned to any zones, return an empty list immediately
       if (assignedZoneIds.length === 0) {
         return res.json({
           data: [],
-          pagination: { total: 0, page, limit, last_page: 1 }
+          pagination: { total: 0, page, limit, last_page: 1 },
         });
       }
 
       // B. Find any sub-zones (Level 2) that belong to these assigned zones
       const subZones = await prisma.location_types.findMany({
         where: { parent_id: { in: assignedZoneIds } },
-        select: { id: true }
+        select: { id: true },
       });
 
       // C. Combine Level 1 (Assigned) and Level 2 (Sub-zones)
-      const allAllowedZoneIds = [...assignedZoneIds, ...subZones.map(z => z.id)];
+      const allAllowedZoneIds = [
+        ...assignedZoneIds,
+        ...subZones.map((z) => z.id),
+      ];
 
       // D. Apply to whereClause
       if (type_id) {
         // If frontend requests a specific zone filter, verify they are allowed to see it
         const requestedIdBigInt = BigInt(type_id);
-        const isAllowed = allAllowedZoneIds.some(id => id.toString() === requestedIdBigInt.toString());
-        
+        const isAllowed = allAllowedZoneIds.some(
+          (id) => id.toString() === requestedIdBigInt.toString(),
+        );
+
         if (isAllowed) {
           whereClause.type_id = requestedIdBigInt;
         } else {
           // They requested a zone outside their jurisdiction
-          return res.json({ data: [], pagination: { total: 0, page, limit, last_page: 1 } });
+          return res.json({
+            data: [],
+            pagination: { total: 0, page, limit, last_page: 1 },
+          });
         }
       } else {
         // Show all washrooms matching ALL of their allowed zones
@@ -964,8 +971,24 @@ export const getAllToilets = async (req, res) => {
     whereClause.deleted_at = null;
 
     const today = new Date();
-    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
-    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+    const startOfDay = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate(),
+      0,
+      0,
+      0,
+      0,
+    );
+    const endOfDay = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate(),
+      23,
+      59,
+      59,
+      999,
+    );
 
     const totalRecords = await prisma.locations.count({
       where: Object.keys(whereClause).length ? whereClause : undefined,
@@ -1028,11 +1051,17 @@ export const getAllToilets = async (req, res) => {
       let averageRating = null;
 
       if (ratingCount > 0) {
-        const sumOfScores = hygieneScores.reduce((sum, score) => sum + score, 0);
+        const sumOfScores = hygieneScores.reduce(
+          (sum, score) => sum + score,
+          0,
+        );
         averageRating = sumOfScores / ratingCount;
       }
 
-      const currentScore = loc.hygiene_scores.length > 0 ? Number(loc.hygiene_scores[0].score) : null;
+      const currentScore =
+        loc.hygiene_scores.length > 0
+          ? Number(loc.hygiene_scores[0].score)
+          : null;
 
       return {
         id: loc.id.toString(),
@@ -1043,7 +1072,9 @@ export const getAllToilets = async (req, res) => {
         longitude: loc.longitude,
         type_id: loc.type_id?.toString() || null,
         facility_company_id: loc.facility_company_id?.toString() || null,
-        averageRating: averageRating ? parseFloat(averageRating.toFixed(2)) : null,
+        averageRating: averageRating
+          ? parseFloat(averageRating.toFixed(2))
+          : null,
         currentScore: currentScore,
         location_types: loc.location_types
           ? {
@@ -1467,20 +1498,12 @@ export const createLocation = async (req, res) => {
     } = req.body;
     const { companyId } = req.query;
 
+    // ✅ Middleware se aayi hui Limit ID
+    const limitId = req.systemLimitId;
+
     const roleId = parseInt(role_id, 10) || null;
-
-    // console.log("=== CREATE LOCATION DEBUG ===");
-    // console.log("Company ID:", companyId);
-    // console.log("Facility Company ID:", facility_company_id);
-    // console.log("Raw body data:", req.body);
-    // console.log("Usage Category:", usage_category);
-    // console.log("Number of WC:", no_of_photos);
-
-    // Get uploaded image URLs
     const imageUrls = req.uploadedFiles?.images || [];
-    console.log("Uploaded images:", imageUrls);
 
-    //     // Basic validation
     if (!name || !type_id) {
       return res.status(400).json({ error: "Name and typeId are required." });
     }
@@ -1493,70 +1516,53 @@ export const createLocation = async (req, res) => {
       } else {
         try {
           finalOptions = JSON.parse(options);
-          console.log("Successfully parsed options:", finalOptions);
         } catch (e) {
-          console.error("Failed to parse options:", e);
           finalOptions = {};
         }
       }
     }
 
+    // Handle usage_category parsing
     let finalUsageCategory = null;
     if (usage_category) {
       if (typeof usage_category === "string") {
         try {
           finalUsageCategory = JSON.parse(usage_category);
-          console.log(
-            "Successfully parsed usage_category:",
-            finalUsageCategory,
-          );
         } catch (e) {
-          console.error("Failed to parse usage_category:", e);
           finalUsageCategory = null;
         }
       } else {
         finalUsageCategory = usage_category;
       }
     }
-    // Parse coordinates
+
     const parsedLatitude =
       latitude && latitude !== "null" ? parseFloat(latitude) : null;
     const parsedLongitude =
       longitude && longitude !== "null" ? parseFloat(longitude) : null;
-
     const parsedNoOfPhotos =
       no_of_photos !== undefined && no_of_photos !== null && no_of_photos !== ""
         ? parseInt(no_of_photos, 10)
         : null;
-    // Parse status
     const parsedStatus =
       status !== undefined && status !== null
         ? status === "true" || status === true
         : true;
 
-    console.log("Parsed coordinates:", { parsedLatitude, parsedLongitude });
-
-    // 🔥 Handle Schedule
     let finalSchedule = null;
-
     if (schedule !== undefined) {
       try {
         finalSchedule = validateAndFormatSchedule(schedule);
       } catch (error) {
-        return res.status(400).json({
-          success: false,
-          error: error.message,
-        });
+        return res.status(400).json({ success: false, error: error.message });
       }
     }
 
-    // 🔥 Handle is_public
     const parsedIsPublic =
       is_public !== undefined
         ? is_public === "true" || is_public === true
-        : true; // default true
+        : true;
 
-    // ✅ BUILD DATA WITH RELATION SYNTAX
     const locationData = {
       name,
       latitude: parsedLatitude,
@@ -1576,70 +1582,59 @@ export const createLocation = async (req, res) => {
       is_public: parsedIsPublic,
     };
 
-    //  Add relations using connect syntax
-    if (type_id) {
-      locationData.location_types = {
-        connect: { id: BigInt(type_id) },
-      };
-    }
-
-    if (companyId) {
-      locationData.companies = {
-        connect: { id: BigInt(companyId) },
-      };
-    }
-
-    if (parent_id) {
-      locationData.locations = {
-        connect: { id: BigInt(parent_id) },
-      };
-    }
-
-    //  ADD FACILITY COMPANY RELATION
-    if (facility_company_id) {
+    if (type_id)
+      locationData.location_types = { connect: { id: BigInt(type_id) } };
+    if (companyId)
+      locationData.companies = { connect: { id: BigInt(companyId) } };
+    if (parent_id)
+      locationData.locations = { connect: { id: BigInt(parent_id) } };
+    if (facility_company_id)
       locationData.facility_companies = {
         connect: { id: BigInt(facility_company_id) },
       };
-    }
 
-    console.log("=== FINAL DATA TO SAVE ===");
-    // console.log("Created no_of_photos:", newLocation.no_of_photos); // ✅ VERIFY SAVED VALUE
+    // 🔥 PRISMA TRANSACTION FOR LIMIT CHECK & CREATION 🔥
+    const newLocation = await prisma.$transaction(async (tx) => {
+      // 1. Increment System Limit
+      if (limitId) {
+        const updatedLimit = await tx.system_limits.update({
+          where: { id: limitId },
+          data: { current_value: { increment: 1 } },
+        });
+        // Strict Race Condition Check
+        if (updatedLimit.current_value > updatedLimit.limit_value) {
+          throw new Error("LIMIT_EXCEEDED");
+        }
+      }
 
-    // console.log(JSON.stringify({
-    //   ...locationData,
-    //   location_types: locationData.location_types ? `connect to ID ${type_id}` : undefined,
-    //   companies: locationData.companies ? `connect to ID ${companyId}` : undefined,
-    //   locations: locationData.locations ? `connect to ID ${parent_id}` : undefined,
-    //   facility_companies: locationData.facility_companies ? `connect to ID ${facility_company_id}` : undefined, // ✅ ADD THIS
-    // }, null, 2));
-
-    // ✅ Insert into DB with include to get the relations back
-    const newLocation = await prisma.locations.create({
-      data: locationData,
-      include: {
-        location_types: true,
-        companies: true,
-        facility_companies: true, // ✅ ADD THIS
-      },
-    });
-
-    console.log("=== LOCATION CREATED ===");
-    // console.log("Created location:", newLocation);
-
-    if (roleId === 8 && roleId !== null) {
-      const add_location_assignments = await prisma.cleaner_assignments.create({
-        data: {
-          name: newLocation.name,
-          cleaner_user_id: BigInt(user_id),
-          company_id: BigInt(companyId),
-          type_id: BigInt(type_id),
-          location_id: newLocation?.id,
-          role_id: roleId,
-          status: "assigned",
-          assigned_on: new Date(),
+      // 2. Create Location
+      const createdLoc = await tx.locations.create({
+        data: locationData,
+        include: {
+          location_types: true,
+          companies: true,
+          facility_companies: true,
         },
       });
-    }
+
+      // 3. Assign Cleaner if required
+      if (roleId === 8 && roleId !== null) {
+        await tx.cleaner_assignments.create({
+          data: {
+            name: createdLoc.name,
+            cleaner_user_id: BigInt(user_id),
+            company_id: BigInt(companyId),
+            type_id: BigInt(type_id),
+            location_id: createdLoc.id,
+            role_id: roleId,
+            status: "assigned",
+            assigned_on: new Date(),
+          },
+        });
+      }
+
+      return createdLoc;
+    });
 
     const serializedLocation = {
       ...newLocation,
@@ -1647,7 +1642,7 @@ export const createLocation = async (req, res) => {
       parent_id: newLocation.parent_id?.toString() || null,
       type_id: newLocation.type_id?.toString() || null,
       company_id: newLocation.company_id?.toString() || null,
-      facility_company_id: newLocation.facility_company_id?.toString() || null, // ✅ ADD THIS
+      facility_company_id: newLocation.facility_company_id?.toString() || null,
       images: newLocation.images || [],
       location_types: newLocation.location_types
         ? {
@@ -1680,11 +1675,83 @@ export const createLocation = async (req, res) => {
       data: serializedLocation,
     });
   } catch (err) {
+    if (err.message === "LIMIT_EXCEEDED") {
+      return res.status(403).json({
+        success: false,
+        message: "Limit exceeded. Cannot create more washrooms.",
+      });
+    }
     console.error("Error creating location:", err);
-    console.error("Error stack:", err.stack);
     res.status(500).json({ error: "Failed to create location." });
   }
 };
+
+export const deleteLocationById = async (req, res) => {
+  console.log("in delete location");
+  try {
+    const locationId = req.params.id;
+    const companyId = req.query.companyId;
+
+    const whereClause = { id: BigInt(locationId) };
+    if (companyId) whereClause.company_id = BigInt(companyId);
+
+    const existingLocation = await prisma.locations.findUnique({
+      where: whereClause,
+    });
+
+    if (!existingLocation) {
+      return res.status(404).json({
+        success: false,
+        message: "Location not found or access denied",
+      });
+    }
+
+    // 🔥 PRISMA TRANSACTION FOR DELETE & LIMIT DECREMENT 🔥
+    await prisma.$transaction(async (tx) => {
+      // 1. Delete assignments
+      await tx.cleaner_assignments.deleteMany({
+        where: { location_id: BigInt(locationId) },
+      });
+
+      // 2. Soft Delete location (Fixed Prisma bug here: delete -> update)
+      await tx.locations.update({
+        where: whereClause,
+        data: { deleted_at: new Date() },
+      });
+
+      // 3. Decrement System Limit (MAX_WASHROOMS)
+      if (companyId) {
+        const limitRecord = await tx.system_limits.findFirst({
+          where: {
+            limit_key: "MAX_WASHROOMS",
+            company_id: BigInt(companyId),
+            is_enabled: true,
+          },
+        });
+        if (limitRecord && limitRecord.current_value > 0) {
+          await tx.system_limits.update({
+            where: { id: limitRecord.id },
+            data: { current_value: { decrement: 1 } },
+          });
+        }
+      }
+    });
+
+    res.json({
+      success: true,
+      message: "Location deleted successfully",
+      data: { id: locationId, deleted: true },
+    });
+  } catch (err) {
+    console.error("Error deleting location:", err);
+    res.status(500).json({
+      success: false,
+      error: "Failed to delete location",
+      details: err.message,
+    });
+  }
+};
+
 
 export const updateLocationById = async (req, res) => {
   console.log("in update location");
@@ -2022,69 +2089,6 @@ export const deleteLocationImage = async (req, res) => {
     res.status(500).json({
       success: false,
       error: "Failed to delete image",
-    });
-  }
-};
-
-export const deleteLocationById = async (req, res) => {
-  console.log("in delete location");
-  try {
-    const locationId = req.params.id;
-    const companyId = req.query.companyId;
-
-    console.log("Deleting location:", locationId, "for company:", companyId);
-
-    // Build where clause for security
-    const whereClause = { id: BigInt(locationId) };
-
-    console.log("Where clause before company filter:", whereClause);
-    // Add company_id filter if provided for additional security
-    if (companyId) {
-      whereClause.company_id = BigInt(companyId);
-    }
-
-    console.log("Final where clause for deletion:", whereClause);
-    // Check if location exists and belongs to company
-    const existingLocation = await prisma.locations.findUnique({
-      where: whereClause,
-    });
-
-    console.log("Existing location:", existingLocation);
-    if (!existingLocation) {
-      console.log("Location not found or access denied");
-      return res.status(404).json({
-        success: false,
-        message: "Location not found or access denied",
-      });
-    }
-
-    console.log("Proceeding to delete location and related assignments");
-    // Simply call delete - middleware handles soft delete automatically
-    await prisma.$transaction([
-      prisma.cleaner_assignments.deleteMany({
-        where: { location_id: BigInt(locationId) },
-      }),
-      prisma.locations.delete({
-        where: whereClause,
-        data: { deleted_at: new Date() },
-      }),
-    ]);
-
-    console.log("delete operation completed for location id:", locationId);
-    res.json({
-      success: true,
-      message: "Location deleted successfully",
-      data: {
-        id: locationId,
-        deleted: true,
-      },
-    });
-  } catch (err) {
-    console.error("Error deleting location:", err);
-    res.status(500).json({
-      success: false,
-      error: "Failed to delete location",
-      details: err.message,
     });
   }
 };

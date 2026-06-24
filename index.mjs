@@ -30,7 +30,7 @@ import getPhotoRoutes from "./routes/photoRoute.js";
 import iotRoutes from "./routes/iotRoutes.js";
 import getattendanceRoute from "./routes/attendanceRoute.js";
 import serviceAccount from "./safai-ai-firebase-adminsdk.json" with { type: "json" };
-
+import systemLimitsRouter from "./routes/systemLimitsRoutes.js";
 dotenv.config();
 
 if (getApps().length === 0) {
@@ -60,15 +60,24 @@ const allowedOrigins = [
   "https://safai-index-livid.vercel.app",
 ];
 
+// app.use(
+//   cors({
+//     origin: "*",
+//     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+//     allowedHeaders: ["Content-Type", "Authorization"],
+//     credentials: true,
+//   }),
+// );
 app.use(
   cors({
-    origin: "*",
+    // 'true' dynamically reflects the requesting origin (e.g., your Vercel app)
+    // This gives you wildcard behavior while satisfying the browser's security rules
+    origin: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
     credentials: true,
   }),
 );
-
 // Routes
 app.use("/api/iot", iotRoutes);
 
@@ -96,6 +105,7 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/shifts-assign", shiftAssign_router);
 app.use("/api/photo", getPhotoRoutes);
 app.use("/api/attendance", getattendanceRoute);
+app.use("/api/limits", systemLimitsRouter);
 app.use("/uploads", express.static("uploads"));
 // app.use("/api", registered_users_router);
 

@@ -47,31 +47,28 @@ export async function getclientUser(req, res) {
     const loggedInUserRole = Number(req.user.role_id);
 
     // 1. Get Base RBAC Filter
-    const userFilter = await RBACFilterService.getUserFilter(req.user, "getUser");
+    const userFilter = await RBACFilterService.getUserFilter(
+      req.user,
+      "getUser",
+    );
 
-    const hiddenRoles = (loggedInUserRole === 1 || loggedInUserRole === 2) 
-      ? [6]       
-      : [2, 6];   
+    const hiddenRoles =
+      loggedInUserRole === 1 || loggedInUserRole === 2 ? [6] : [2, 6];
 
     // 2. Base Where
-    const baseWhere = { 
+    const baseWhere = {
       deleted_at: null,
-      role_id: { notIn: hiddenRoles }, 
-      AND: [
-        { id: { not: loggedInUserId } }
-      ]
+      role_id: { notIn: hiddenRoles },
+      AND: [{ id: { not: loggedInUserId } }],
     };
-    
+
     if (companyId) {
       baseWhere.company_id = BigInt(companyId);
     }
 
     if (loggedInUserRole === 3 || loggedInUserRole === 8) {
       baseWhere.AND.push({
-        OR: [
-          userFilter, 
-          { created_by: loggedInUserId } 
-        ]
+        OR: [userFilter, { created_by: loggedInUserId }],
       });
     } else {
       if (Object.keys(userFilter).length > 0) {
@@ -86,14 +83,14 @@ export async function getclientUser(req, res) {
     if (roleId && roleId !== "all") {
       mainWhere.AND.push({ role_id: Number(roleId) });
     }
-    
+
     if (search) {
       mainWhere.AND.push({
         OR: [
-          { name: { contains: search, mode: 'insensitive' } },
-          { email: { contains: search, mode: 'insensitive' } },
-          { phone: { contains: search, mode: 'insensitive' } }
-        ]
+          { name: { contains: search, mode: "insensitive" } },
+          { email: { contains: search, mode: "insensitive" } },
+          { phone: { contains: search, mode: "insensitive" } },
+        ],
       });
     }
 
@@ -103,20 +100,20 @@ export async function getclientUser(req, res) {
     // 4. Execute Queries
     const [users, totalCount, roleCountsRaw] = await prisma.$transaction([
       prisma.users.findMany({
-        where: mainWhere, 
-        skip: skip,       
+        where: mainWhere,
+        skip: skip,
         take: parsedLimit,
         include: { role: true },
         orderBy: { id: "desc" },
       }),
-      prisma.users.count({ 
-        where: mainWhere  
+      prisma.users.count({
+        where: mainWhere,
       }),
       prisma.users.groupBy({
-        by: ['role_id'],
-        where: baseWhere, 
-        _count: { _all: true }
-      })
+        by: ["role_id"],
+        where: baseWhere,
+        _count: { _all: true },
+      }),
     ]);
 
     // Format role counts safely
@@ -128,13 +125,16 @@ export async function getclientUser(req, res) {
     // --- 🚨 THE BULLETPROOF FIX 🚨 ---
     // This helper recursively finds ANY BigInt in an object/array and makes it a String
     const serializeBigInt = (obj) => {
-      if (typeof obj === 'bigint') return obj.toString();
+      if (typeof obj === "bigint") return obj.toString();
       if (Array.isArray(obj)) return obj.map(serializeBigInt);
-      if (obj !== null && typeof obj === 'object') {
+      if (obj !== null && typeof obj === "object") {
         // Handle Date objects safely so they don't get destroyed
         if (obj instanceof Date) return obj.toISOString();
         return Object.fromEntries(
-          Object.entries(obj).map(([key, value]) => [key, serializeBigInt(value)])
+          Object.entries(obj).map(([key, value]) => [
+            key,
+            serializeBigInt(value),
+          ]),
         );
       }
       return obj;
@@ -154,12 +154,11 @@ export async function getclientUser(req, res) {
 
     // Return Data
     res.status(200).json(safeData);
-
   } catch (error) {
     console.error("Error fetching users with RBAC and Pagination:", error);
-    res.status(500).json({ 
-      status: "error", 
-      message: "Internal Server Error fetching users." 
+    res.status(500).json({
+      status: "error",
+      message: "Internal Server Error fetching users.",
     });
   }
 }
@@ -185,7 +184,7 @@ export async function getclientUser(req, res) {
 //     if (roleId && roleId !== "all") {
 //       mainWhere.role_id = Number(roleId);
 //     }
-    
+
 //     if (search) {
 //       mainWhere.OR = [
 //         { name: { contains: search, mode: 'insensitive' } },
@@ -198,15 +197,15 @@ export async function getclientUser(req, res) {
 //     const [users, totalCount, roleCountsRaw] = await prisma.$transaction([
 //       // Query 1: Get the actual user rows
 //       prisma.users.findMany({
-//         where: mainWhere, 
-//         skip: skip,       
+//         where: mainWhere,
+//         skip: skip,
 //         take: parsedLimit,
 //         include: { role: true },
 //         orderBy: { id: "desc" },
 //       }),
 //       // Query 2: Get total count for pagination
-//       prisma.users.count({ 
-//         where: mainWhere  
+//       prisma.users.count({
+//         where: mainWhere
 //       }),
 //       // Query 3: Get the individual role counts for the top cards
 //       prisma.users.groupBy({
@@ -243,9 +242,9 @@ export async function getclientUser(req, res) {
 
 //   } catch (error) {
 //     console.error("Error fetching users with RBAC and Pagination:", error);
-//     res.status(500).json({ 
-//       status: "error", 
-//       message: "Internal Server Error fetching users." 
+//     res.status(500).json({
+//       status: "error",
+//       message: "Internal Server Error fetching users."
 //     });
 //   }
 // }
@@ -258,7 +257,10 @@ export async function getUser(req, res) {
     const skip = (parsedPage - 1) * parsedLimit;
     const currentUser = req.user;
 
-    const userFilter = await RBACFilterService.getUserFilter(currentUser, "getUser");
+    const userFilter = await RBACFilterService.getUserFilter(
+      currentUser,
+      "getUser",
+    );
 
     const whereClause = { ...userFilter, deleted_at: null };
     if (companyId) whereClause.company_id = BigInt(companyId);
@@ -310,7 +312,10 @@ export async function getUsersCount(req, res) {
     const currentUser = req.user;
 
     // Use your existing RBAC service
-    const userFilter = await RBACFilterService.getUserFilter(currentUser, "getUser");
+    const userFilter = await RBACFilterService.getUserFilter(
+      currentUser,
+      "getUser",
+    );
 
     const whereClause = { ...userFilter, deleted_at: null };
     if (companyId) whereClause.company_id = BigInt(companyId);
@@ -493,32 +498,32 @@ export async function getUserById(req, res) {
       // Role data
       role: user.role
         ? {
-          id: user.role.id,
-          name: user.role.name,
-          description: user.role.description,
-        }
+            id: user.role.id,
+            name: user.role.name,
+            description: user.role.description,
+          }
         : null,
 
       // Company data
       companies: user.companies
         ? {
-          id: user.companies.id.toString(), // ✅ Convert company BigInt
-          name: user.companies.name,
-          description: user.companies.description,
-        }
+            id: user.companies.id.toString(), // ✅ Convert company BigInt
+            name: user.companies.name,
+            description: user.companies.description,
+          }
         : null,
 
       location_assignments: user?.cleaner_assignments_as_cleaner
         ? user?.cleaner_assignments_as_cleaner.map((item) => ({
-          ...item,
-          id: item?.id?.toString(),
-          location_id: item?.id?.toString(),
-          locations: {
-            ...item.locations,
-            id: item?.locations?.id?.toString(),
-            type_id: item?.locations?.type_id?.toString(),
-          },
-        }))
+            ...item,
+            id: item?.id?.toString(),
+            location_id: item?.id?.toString(),
+            locations: {
+              ...item.locations,
+              id: item?.locations?.id?.toString(),
+              type_id: item?.locations?.type_id?.toString(),
+            },
+          }))
         : null,
     };
 
@@ -534,129 +539,13 @@ export async function getUserById(req, res) {
 }
 
 // // Handles POST /api/users
-// export const createUser = async (req, res) => {
-//   console.log('in create user', req.body);
-//   console.log('company ID from query:', req.query.companyId);
-
-//   try {
-//     const { password, location_ids , companyId = [], ...data } = req.body;
-//     // const { companyId } = req.query; // Extract company_id from query params
-
-//     console.log(companyId, "company id from the create user  ");
-//     if (!password) {
-//       return res.status(400).json({ message: "Password is required" });
-//     }
-
-//     if (!companyId) {
-//       return res.status(400).json({ message: "Company ID is required" });
-//     }
-
-//     console.log('Hashing password...');
-//     const hashedPassword = await bcrypt.hash(password, 10);
-
-//     console.log('Creating user with company_id:', companyId);
-
-//     // Helper function to serialize BigInt values
-//     const serializeBigInt = (obj) => {
-//       return JSON.parse(JSON.stringify(obj, (key, value) =>
-//         typeof value === 'bigint' ? value.toString() : value
-//       ));
-//     };
-
-//     const newUser = await prisma.users.create({
-//       data: {
-//         ...data,
-//         password: hashedPassword,
-//         company_id: BigInt(companyId), // Add company_id as BigInt
-//         birthdate: data?.birthdate ? new Date(data.birthdate) : null,
-//         ...(location_ids.length > 0 && {
-//           location_assignments: {
-//             create: location_ids.map((locId) => ({
-//               location_id: BigInt(locId),
-//             })),
-//           },
-//         }),
-//       },
-//       include: {
-//         location_assignments: {
-//           include: {
-//             location: {
-//               select: {
-//                 id: true,
-//                 name: true,
-//                 address: true,
-//               }
-//             }
-//           }
-//         }
-//       }
-//     });
-
-//     console.log('User created successfully:', newUser.id);
-
-//     // Serialize the response to handle BigInt values
-//     const safeUser = serializeBigInt({
-//       ...newUser,
-//       // Ensure all BigInt fields are properly converted
-//       id: newUser.id.toString(),
-//       company_id: newUser.company_id?.toString(),
-//       location_assignments: newUser.location_assignments?.map(assignment => ({
-//         ...assignment,
-//         location_id: assignment.location_id.toString(),
-//         user_id: assignment.user_id.toString(),
-//         location: assignment.location ? {
-//           ...assignment.location,
-//           id: assignment.location.id.toString()
-//         } : null
-//       }))
-//     });
-
-//     console.log('Serialized user data:', safeUser);
-//     res.status(201).json(safeUser);
-
-//   } catch (error) {
-//     console.error('Error in createUser:', error);
-
-//     // Handle Prisma unique constraint violations
-//     if (error.code === 'P2002') {
-//       const fieldName = error.meta?.target?.join(', ') || 'field';
-//       return res.status(409).json({
-//         message: `User with this ${fieldName} already exists.`,
-//         code: 'DUPLICATE_ENTRY'
-//       });
-//     }
-
-//     // Handle foreign key constraint violations
-//     if (error.code === 'P2003') {
-//       return res.status(400).json({
-//         message: "Invalid company ID or location ID provided.",
-//         code: 'INVALID_REFERENCE'
-//       });
-//     }
-
-//     // Handle other Prisma errors
-//     if (error.code?.startsWith('P')) {
-//       return res.status(400).json({
-//         message: "Database constraint violation.",
-//         code: error.code,
-//         detail: error.message
-//       });
-//     }
-
-//     // Generic error handling
-//     res.status(500).json({
-//       message: "Error creating user",
-//       error: error.message,
-//       code: 'INTERNAL_ERROR'
-//     });
-//   }
-// };
 
 export const createUser = async (req, res) => {
   try {
     const { password, location_ids = [], company_id, ...data } = req.body;
 
-    if (!password) return res.status(400).json({ message: "Password is required" });
+    if (!password)
+      return res.status(400).json({ message: "Password is required" });
 
     // Check if the user being created is a superadmin
     const isCreatingSuperAdmin = parseInt(data.role_id) === 1;
@@ -678,17 +567,18 @@ export const createUser = async (req, res) => {
       data.email = null;
     }
 
-    const currentUser = req.user; 
-    
+    const currentUser = req.user;
+
     // Check multiple possible locations for role_id
-    const currentRoleId = currentUser?.role_id 
-      || currentUser?.role?.id 
-      || currentUser?.user?.role_id;
+    const currentRoleId =
+      currentUser?.role_id ||
+      currentUser?.role?.id ||
+      currentUser?.user?.role_id;
 
     console.log("3. Extracted Role ID:", currentRoleId);
 
     const isSupervisor = parseInt(currentRoleId) === 3;
-  
+
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const serializeBigInt = (obj) => {
@@ -701,15 +591,75 @@ export const createUser = async (req, res) => {
 
     const currentUserId = currentUser?.id || currentUser?.user?.id;
 
-    const newUser = await prisma.users.create({
-      data: {
-        ...data,
-        password: hashedPassword,
-        ...(company_id && { company_id: BigInt(company_id) }), 
-        birthdate: data?.birthdate ? new Date(data.birthdate) : null,
-        ...(isSupervisor && currentUserId && { created_by: BigInt(currentUserId) }),
-      },
-      include: {},
+    // 🔥 WRAPPED IN TRANSACTION FOR LIMIT CHECKS 🔥
+    const newUser = await prisma.$transaction(async (tx) => {
+      // --- 🚨 LIMIT CHECKS FOR USERS 🚨 ---
+      if (company_id && !isCreatingSuperAdmin) {
+        const companyIdBigInt = BigInt(company_id);
+        const roleIdInt = parseInt(data.role_id);
+
+        // 1. Check Overall MAX_USERS Limit
+        const userLimit = await tx.system_limits.findFirst({
+          where: {
+            limit_key: "MAX_USERS",
+            company_id: companyIdBigInt,
+            is_enabled: true,
+          },
+        });
+
+        if (userLimit && userLimit.current_value >= userLimit.limit_value) {
+          throw new Error("LIMIT_MAX_USERS");
+        }
+
+        // 2. Check Specific Role Limit (MAX_CLEANERS or MAX_SUPERVISORS)
+        let roleLimitKey = null;
+        if (roleIdInt === 3) roleLimitKey = "MAX_SUPERVISORS";
+        if (roleIdInt === 5 || roleIdInt === 8) roleLimitKey = "MAX_CLEANERS"; // Assuming 5/8 are cleaners
+
+        if (roleLimitKey) {
+          const roleLimit = await tx.system_limits.findFirst({
+            where: {
+              limit_key: roleLimitKey,
+              company_id: companyIdBigInt,
+              is_enabled: true,
+            },
+          });
+
+          if (roleLimit && roleLimit.current_value >= roleLimit.limit_value) {
+            throw new Error(`LIMIT_${roleLimitKey}`);
+          }
+
+          // Increment Role Limit
+          if (roleLimit) {
+            await tx.system_limits.update({
+              where: { id: roleLimit.id },
+              data: { current_value: { increment: 1 } },
+            });
+          }
+        }
+
+        // Increment Overall User Limit
+        if (userLimit) {
+          await tx.system_limits.update({
+            where: { id: userLimit.id },
+            data: { current_value: { increment: 1 } },
+          });
+        }
+      }
+      // --- END LIMIT CHECKS ---
+
+      // Create the user
+      return await tx.users.create({
+        data: {
+          ...data,
+          password: hashedPassword,
+          ...(company_id && { company_id: BigInt(company_id) }),
+          birthdate: data?.birthdate ? new Date(data.birthdate) : null,
+          ...(isSupervisor &&
+            currentUserId && { created_by: BigInt(currentUserId) }),
+        },
+        include: {},
+      });
     });
 
     const safeUser = serializeBigInt({
@@ -723,140 +673,44 @@ export const createUser = async (req, res) => {
   } catch (error) {
     console.error("Error in createUser:", error);
 
-    // 🆕 Catch the Prisma Unique Constraint error gracefully
-    if (error.code === 'P2002') {
-      const target = error.meta?.target || [];
-      if (target.includes('email')) {
-        return res.status(400).json({ message: "A user with this email already exists." });
-      }
-      if (target.includes('phone')) {
-        return res.status(400).json({ message: "A user with this phone number already exists." });
-      }
-      return res.status(400).json({ message: "A record with this information already exists." });
+    // 🆕 Custom Limit Error Handlers
+    if (error.message === "LIMIT_MAX_USERS") {
+      return res.status(403).json({
+        status: "error",
+        message: "Maximum overall user limit reached for this company.",
+      });
+    }
+    if (error.message.startsWith("LIMIT_MAX_")) {
+      const roleName = error.message.replace("LIMIT_MAX_", "").toLowerCase();
+      return res.status(403).json({
+        status: "error",
+        message: `Maximum limit for ${roleName} reached. Cannot add more.`,
+      });
     }
 
-    res.status(500).json({ message: "Error creating user", error: error.message });
+    // 🆕 Catch the Prisma Unique Constraint error gracefully
+    if (error.code === "P2002") {
+      const target = error.meta?.target || [];
+      if (target.includes("email")) {
+        return res
+          .status(400)
+          .json({ message: "A user with this email already exists." });
+      }
+      if (target.includes("phone")) {
+        return res
+          .status(400)
+          .json({ message: "A user with this phone number already exists." });
+      }
+      return res
+        .status(400)
+        .json({ message: "A record with this information already exists." });
+    }
+
+    res
+      .status(500)
+      .json({ message: "Error creating user", error: error.message });
   }
 };
-
-// export const createUser = async (req, res) => {
-//   console.log("in create user", req.body);
-
-//   try {
-//     const { password, location_ids = [], company_id, ...data } = req.body;
-//     // Extract company_id from the body, not query
-
-//     console.log(company_id, "company_id from body");
-
-//     if (!password) {
-//       return res.status(400).json({ message: "Password is required" });
-//     }
-
-//     if (!company_id) {
-//       return res.status(400).json({ message: "Company ID is required" });
-//     }
-
-//     console.log("Hashing password...");
-//     const hashedPassword = await bcrypt.hash(password, 10);
-
-//     console.log("Creating user with company_id:", company_id);
-
-//     // Helper function to serialize BigInt values
-//     const serializeBigInt = (obj) => {
-//       return JSON.parse(
-//         JSON.stringify(obj, (key, value) =>
-//           typeof value === "bigint" ? value.toString() : value,
-//         ),
-//       );
-//     };
-
-//     const newUser = await prisma.users.create({
-//       data: {
-//         ...data,
-//         password: hashedPassword,
-//         company_id: BigInt(company_id), // Use company_id from body
-//         birthdate: data?.birthdate ? new Date(data.birthdate) : null,
-//         // ...(location_ids.length > 0 && {
-//         //   location_assignments: {
-//         //     create: location_ids.map((locId) => ({
-//         //       location_id: BigInt(locId),
-//         //     })),
-//         //   },
-//         // }),
-//       },
-//       include: {
-//         // location_assignments: {
-//         //   include: {
-//         //     location: {
-//         //       select: {
-//         //         id: true,
-//         //         name: true,
-//         //         // address: true,
-//         //       }
-//         //     }
-//         //   }
-//         // }
-//       },
-//     });
-
-//     console.log("User created successfully:", newUser.id);
-
-//     // Serialize the response to handle BigInt values
-//     const safeUser = serializeBigInt({
-//       ...newUser,
-//       id: newUser.id.toString(),
-//       company_id: newUser.company_id?.toString(),
-//       // location_assignments: newUser.location_assignments?.map(assignment => ({
-//       //   ...assignment,
-//       //   location_id: assignment.location_id.toString(),
-//       //   user_id: assignment.user_id.toString(),
-//       //   location: assignment.location ? {
-//       //     ...assignment.location,
-//       //     id: assignment.location.id.toString()
-//       //   } : null
-//       // }))
-//     });
-
-//     // console.log('Serialized user data:', safeUser);
-//     res.status(201).json(safeUser);
-//   } catch (error) {
-//     console.error("Error in createUser:", error);
-
-//     // Handle Prisma unique constraint violations
-//     if (error.code === "P2002") {
-//       const fieldName = error.meta?.target?.join(", ") || "field";
-//       return res.status(409).json({
-//         message: `User with this ${fieldName} already exists.`,
-//         code: "DUPLICATE_ENTRY",
-//       });
-//     }
-
-//     // Handle foreign key constraint violations
-//     if (error.code === "P2003") {
-//       return res.status(400).json({
-//         message: "Invalid company ID or location ID provided.",
-//         code: "INVALID_REFERENCE",
-//       });
-//     }
-
-//     // Handle other Prisma errors
-//     if (error.code?.startsWith("P")) {
-//       return res.status(400).json({
-//         message: "Database constraint violation.",
-//         code: error.code,
-//         detail: error.message,
-//       });
-//     }
-
-//     // Generic error handling
-//     res.status(500).json({
-//       message: "Error creating user",
-//       error: error.message,
-//       code: "INTERNAL_ERROR",
-//     });
-//   }
-// };
-
 
 export const updateUser = async (req, res) => {
   const userId = BigInt(req.params.id);
@@ -954,16 +808,75 @@ export const updateUser = async (req, res) => {
 export const deleteUser = async (req, res) => {
   const userId = BigInt(req.params.id);
   try {
-    await prisma.users.delete({ where: { id: userId } });
+    // 🔥 WRAPPED IN TRANSACTION TO DECREMENT LIMITS 🔥
+    await prisma.$transaction(async (tx) => {
+      // 1. Fetch user to know their role and company before deleting
+      const userToDelete = await tx.users.findUnique({
+        where: { id: userId },
+        select: { company_id: true, role_id: true },
+      });
 
-    await prisma.cleaner_assignments.deleteMany({
-      where: {
-        cleaner_user_id: userId,
-      },
+      if (!userToDelete) {
+        throw new Error("USER_NOT_FOUND");
+      }
+
+      // 2. Delete related assignments
+      await tx.cleaner_assignments.deleteMany({
+        where: { cleaner_user_id: userId },
+      });
+
+      // 3. Delete the user
+      await tx.users.delete({ where: { id: userId } });
+
+      // 4. Decrement Limits
+      if (userToDelete.company_id) {
+        const companyIdBigInt = userToDelete.company_id;
+        const roleIdInt = parseInt(userToDelete.role_id);
+
+        // Decrement MAX_USERS
+        const userLimit = await tx.system_limits.findFirst({
+          where: {
+            limit_key: "MAX_USERS",
+            company_id: companyIdBigInt,
+            is_enabled: true,
+          },
+        });
+        if (userLimit && userLimit.current_value > 0) {
+          await tx.system_limits.update({
+            where: { id: userLimit.id },
+            data: { current_value: { decrement: 1 } },
+          });
+        }
+
+        // Decrement Specific Role Limit
+        let roleLimitKey = null;
+        if (roleIdInt === 3) roleLimitKey = "MAX_SUPERVISORS";
+        if (roleIdInt === 5 || roleIdInt === 8) roleLimitKey = "MAX_CLEANERS";
+
+        if (roleLimitKey) {
+          const roleLimit = await tx.system_limits.findFirst({
+            where: {
+              limit_key: roleLimitKey,
+              company_id: companyIdBigInt,
+              is_enabled: true,
+            },
+          });
+          if (roleLimit && roleLimit.current_value > 0) {
+            await tx.system_limits.update({
+              where: { id: roleLimit.id },
+              data: { current_value: { decrement: 1 } },
+            });
+          }
+        }
+      }
     });
+
     res.status(200).json({ message: "User deleted successfully" });
   } catch (error) {
-    console.log(error, "error");
+    if (error.message === "USER_NOT_FOUND") {
+      return res.status(404).json({ message: "User not found" });
+    }
+    console.log("Error in deleteUser:", error);
     res
       .status(500)
       .json({ message: "Error deleting user", error: error.message });

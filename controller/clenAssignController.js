@@ -2,7 +2,6 @@ import prisma from "../config/prismaClient.mjs";
 import RBACFilterService from "../utils/rbacFilterService.js";
 import { serializeBigInt } from "../utils/serializer.js";
 
-
 // export const getAllAssignments = async (req, res) => {
 //   try {
 
@@ -21,14 +20,12 @@ import { serializeBigInt } from "../utils/serializer.js";
 
 //     let whereClause = {};
 
-
 //     if (req.user.role_id === 3) {
 //       console.log("Supervisor - excluding other supervisors");
 //       whereClause.role_id = {
 //         not: 3  // Exclude role_id 3 (supervisors)
 //       };
 //     }
-
 
 //     console.log(req.query, "req query");
 //     // console.log(req.user, "req user");
@@ -117,7 +114,9 @@ export const getAllAssignments = async (req, res) => {
     const { company_id, role_id } = req.query;
 
     if (!company_id) {
-      return res.status(400).json({ status: "error", message: "company_id required." });
+      return res
+        .status(400)
+        .json({ status: "error", message: "company_id required." });
     }
 
     let whereClause = { deleted_at: null }; // Ensure we only get active assignments
@@ -128,18 +127,23 @@ export const getAllAssignments = async (req, res) => {
     if (company_id) {
       whereClause.company_id = company_id;
     }
-    if (role_id && role_id !== 'undefined') {
+    if (role_id && role_id !== "undefined") {
       const requestedRoleId = parseInt(role_id);
       if (!(req.user.role_id === 3 && requestedRoleId === 3)) {
         whereClause.role_id = requestedRoleId;
       }
     }
 
-    const filteredLocationIds = await RBACFilterService.getLocationFilter(user, "cleaner_activity");
+    const filteredLocationIds = await RBACFilterService.getLocationFilter(
+      user,
+      "cleaner_activity",
+    );
     whereClause = { ...whereClause, ...filteredLocationIds };
 
     // --- 2. COUNT & FETCH ---
-    const totalRecords = await prisma.cleaner_assignments.count({ where: whereClause });
+    const totalRecords = await prisma.cleaner_assignments.count({
+      where: whereClause,
+    });
 
     const assignments = await prisma.cleaner_assignments.findMany({
       where: whereClause,
@@ -152,25 +156,25 @@ export const getAllAssignments = async (req, res) => {
         status: true,
         assigned_on: true,
         locations: {
-          select: { name: true } // Only get location name
+          select: { name: true }, // Only get location name
         },
         role: {
-          select: { name: true } // Only get role name
+          select: { name: true }, // Only get role name
         },
         cleaner_user: {
-          select: { name: true,  phone:true} // Only get user name and phone
-        }
-      }
+          select: { name: true, phone: true }, // Only get user name and phone
+        },
+      },
     });
 
     // --- 3. LEAN MAP ---
     // Prisma returns the nested objects directly now, no extra mapping needed!
-    const result = assignments.map(a => ({
+    const result = assignments.map((a) => ({
       ...a,
       id: a.id.toString(),
       user: a.cleaner_user, // Directly map the user object from the relation
       locations: a.locations,
-      role: a.role
+      role: a.role,
     }));
 
     res.status(200).json({
@@ -180,8 +184,8 @@ export const getAllAssignments = async (req, res) => {
         total: totalRecords,
         page,
         limit,
-        last_page: Math.ceil(totalRecords / limit) || 1
-      }
+        last_page: Math.ceil(totalRecords / limit) || 1,
+      },
     });
   } catch (error) {
     console.error("Error fetching assignments:", error);
@@ -257,7 +261,7 @@ export const getAllAssignments = async (req, res) => {
 //     // Fetch users
 //     const users = await prisma.users.findMany({
 //       where: { id: { in: userIds } },
-//       select: { id: true, name: true, email: true }, 
+//       select: { id: true, name: true, email: true },
 //     });
 
 //     // Map userId → user object
@@ -339,13 +343,13 @@ export const getAssignmentById = async (req, res) => {
     if (!id || isNaN(id)) {
       return res.status(400).json({
         status: "error",
-        message: "Invalid assignment ID provided"
+        message: "Invalid assignment ID provided",
       });
     }
 
     // Build where clause
     let whereClause = {
-      id: BigInt(id)
+      id: BigInt(id),
     };
 
     // Add company filter if provided
@@ -365,12 +369,12 @@ export const getAssignmentById = async (req, res) => {
             phone: true,
             role: {
               select: {
-                name: true
-              }
-            }
-          }
+                name: true,
+              },
+            },
+          },
         },
-        // Include location details  
+        // Include location details
         locations: {
           select: {
             id: true,
@@ -379,50 +383,53 @@ export const getAssignmentById = async (req, res) => {
             longitude: true,
             location_types: {
               select: {
-                name: true
-              }
-            }
-          }
+                name: true,
+              },
+            },
+          },
         },
         // Include supervisor details
         supervisor: {
           select: {
             id: true,
             name: true,
-            email: true
-          }
-        }
-      }
+            email: true,
+          },
+        },
+      },
     });
 
     if (!assignment) {
       return res.status(404).json({
         status: "error",
-        message: "Assignment not found"
+        message: "Assignment not found",
       });
     }
 
     // Serialize BigInt values
-    const serializedAssignment = JSON.parse(JSON.stringify(assignment, (key, value) =>
-      typeof value === 'bigint' ? value.toString() : value
-    ));
+    const serializedAssignment = JSON.parse(
+      JSON.stringify(assignment, (key, value) =>
+        typeof value === "bigint" ? value.toString() : value,
+      ),
+    );
 
     res.json({
       status: "success",
       data: serializedAssignment,
-      message: "Assignment retrieved successfully"
+      message: "Assignment retrieved successfully",
     });
-
   } catch (error) {
     console.error("Get assignment by ID error:", error);
     res.status(500).json({
       status: "error",
       message: "Failed to fetch assignment",
-      detail: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      detail:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : "Internal server error",
     });
   }
 };
-
 
 // export const createAssignment = async (req, res) => {
 //   console.log("in create assignments");
@@ -535,95 +542,135 @@ export const getAssignmentById = async (req, res) => {
 
 export const createAssignment = async (req, res) => {
   try {
-    // ✅ Extract type_ids (array) instead of type_id
-    const { cleaner_user_id, company_id, location_ids, type_ids, type_id, status, role_id } = req.body;
-    const caller = req.user; 
+    const {
+      cleaner_user_id,
+      company_id,
+      location_ids,
+      type_ids,
+      type_id,
+      status,
+      role_id,
+    } = req.body;
+    const caller = req.user;
 
     if (!cleaner_user_id || !company_id || !role_id) {
-      return res.status(400).json({
-        status: "error",
-        message: "Missing required fields: cleaner_user_id, company_id, and role_id.",
-      });
+      return res
+        .status(400)
+        .json({ status: "error", message: "Missing required fields." });
     }
 
-    // Normalize type_ids so it always treats it as an array (even if frontend sends old 'type_id' key)
-    const typesArray = type_ids || (type_id ? (Array.isArray(type_id) ? type_id : [type_id]) : []);
+    const typesArray =
+      type_ids ||
+      (type_id ? (Array.isArray(type_id) ? type_id : [type_id]) : []);
+    const hasLocations =
+      location_ids && Array.isArray(location_ids) && location_ids.length > 0;
+    const hasTypes =
+      typesArray && Array.isArray(typesArray) && typesArray.length > 0;
 
-    const hasLocations = location_ids && Array.isArray(location_ids) && location_ids.length > 0;
-    const hasTypes = typesArray && Array.isArray(typesArray) && typesArray.length > 0;
-
-    if (!hasLocations && !hasTypes) {
+    if (!hasLocations && !hasTypes)
       return res.status(400).json({
         status: "error",
-        message: "You must provide either an array of location_ids OR type_ids.",
+        message: "Provide location_ids OR type_ids.",
       });
-    }
-
-    if (hasLocations && hasTypes) {
-      return res.status(400).json({
-        status: "error",
-        message: "You cannot provide both location_ids and type_ids. Choose one assignment method.",
-      });
-    }
+    if (hasLocations && hasTypes)
+      return res
+        .status(400)
+        .json({ status: "error", message: "Cannot provide both." });
 
     const parsedRoleId = parseInt(role_id);
 
     // --- 🚨 SECURITY AUTHORIZATION CHECK 🚨 ---
+    // (Existing RBAC logic remains untouched)
     if (caller.role_id !== 1 && caller.role_id !== 2) {
-      const callerAllowedBigInts = await RBACFilterService.getAuthorizedLocationIds(caller.id, caller.company_id);
-      const callerAllowedIds = callerAllowedBigInts.map(id => id.toString());
-
-      if (hasLocations) {
-        const hasUnauthorizedLocations = location_ids.some(
-          (reqLocId) => !callerAllowedIds.includes(reqLocId.toString())
+      const callerAllowedBigInts =
+        await RBACFilterService.getAuthorizedLocationIds(
+          caller.id,
+          caller.company_id,
         );
-        if (hasUnauthorizedLocations) {
-          return res.status(403).json({
-            status: "error",
-            message: "Forbidden: You are trying to assign a user to a location you do not manage."
-          });
-        }
-      }
-
-      if (hasTypes) {
+      const callerAllowedIds = callerAllowedBigInts.map((id) => id.toString());
+      if (
+        hasLocations &&
+        location_ids.some(
+          (reqLocId) => !callerAllowedIds.includes(reqLocId.toString()),
+        )
+      ) {
         return res.status(403).json({
           status: "error",
-          message: "Forbidden: Only Administrators can grant broad zone/type-based access."
+          message: "Forbidden: Unauthorized location.",
         });
       }
+      if (hasTypes)
+        return res.status(403).json({
+          status: "error",
+          message: "Forbidden: Broad access restricted.",
+        });
     }
 
-    // --- SCENARIO A: TYPE-BASED ASSIGNMENT (Zonal Admins / Broad Access) ---
+    // --- 🚨 RELATIONSHIP LIMIT CHECK (MAX_WASHROOMS_PER_CLEANER) 🚨 ---
+    const cleanerAssignedCount = await prisma.cleaner_assignments.count({
+      where: {
+        cleaner_user_id: BigInt(cleaner_user_id),
+        status: "assigned",
+        deleted_at: null,
+      },
+    });
+
+    const maxPerCleanerLimit = await prisma.system_limits.findFirst({
+      where: {
+        limit_key: "MAX_WASHROOMS_PER_CLEANER",
+        company_id: BigInt(company_id),
+        is_enabled: true,
+      },
+    });
+
+    const newItemsCount = hasLocations
+      ? location_ids.length
+      : typesArray.length;
+
+    if (
+      maxPerCleanerLimit &&
+      cleanerAssignedCount + newItemsCount > maxPerCleanerLimit.limit_value
+    ) {
+      return res.status(403).json({
+        status: "error",
+        message: `Limit Exceeded: This cleaner can only handle ${maxPerCleanerLimit.limit_value} assignments.`,
+      });
+    }
+
+    // --- SCENARIO A: TYPE-BASED ASSIGNMENT ---
     if (hasTypes) {
-      // 1. Find if they are already assigned to any of these zones
-      const existingTypeAssignments = await prisma.cleaner_assignments.findMany({
-        where: {
-          cleaner_user_id: BigInt(cleaner_user_id),
-          type_id: { in: typesArray.map((id) => BigInt(id)) },
-          company_id: BigInt(company_id),
-          status: 'assigned'
-        }
-      });
+      const existingTypeAssignments = await prisma.cleaner_assignments.findMany(
+        {
+          where: {
+            cleaner_user_id: BigInt(cleaner_user_id),
+            type_id: { in: typesArray.map((id) => BigInt(id)) },
+            company_id: BigInt(company_id),
+            status: "assigned",
+          },
+        },
+      );
 
-      const existingTypeIds = existingTypeAssignments.map((a) => a.type_id.toString());
-      const typesToAssign = typesArray.filter((id) => !existingTypeIds.includes(id.toString()));
+      const existingTypeIds = existingTypeAssignments.map((a) =>
+        a.type_id.toString(),
+      );
+      const typesToAssign = typesArray.filter(
+        (id) => !existingTypeIds.includes(id.toString()),
+      );
 
-      if (typesToAssign.length === 0) {
-        return res.status(400).json({ 
-          status: "error", 
-          message: "User is already assigned to all selected zones." 
-        });
-      }
+      if (typesToAssign.length === 0)
+        return res
+          .status(400)
+          .json({ status: "error", message: "User is already assigned." });
 
-      // 2. Fetch the zone names from DB so we can save "Nagpur" instead of "Broad Type Assignment"
       const zoneRecords = await prisma.location_types.findMany({
-        where: { id: { in: typesToAssign.map(id => BigInt(id)) } },
-        select: { id: true, name: true }
+        where: { id: { in: typesToAssign.map((id) => BigInt(id)) } },
+        select: { id: true, name: true },
       });
 
-      // 3. Prepare the data payload for createMany
       const assignmentsToCreate = typesToAssign.map((typeId) => {
-        const matchingZone = zoneRecords.find(z => z.id.toString() === typeId.toString());
+        const matchingZone = zoneRecords.find(
+          (z) => z.id.toString() === typeId.toString(),
+        );
         return {
           name: matchingZone ? matchingZone.name : "Zone Assignment",
           cleaner_user_id: BigInt(cleaner_user_id),
@@ -635,78 +682,68 @@ export const createAssignment = async (req, res) => {
         };
       });
 
-      // 4. Bulk insert the zones
-      const result = await prisma.cleaner_assignments.createMany({ data: assignmentsToCreate });
-
-      const skippedCount = typesArray.length - typesToAssign.length;
-      let message = `${result.count} zone assignment(s) created successfully.`;
-      if (skippedCount > 0) message += ` ${skippedCount} zone(s) skipped (already assigned).`;
-
+      const result = await prisma.cleaner_assignments.createMany({
+        data: assignmentsToCreate,
+      });
       return res.status(201).json({
         status: "success",
-        message: message,
-        data: { created: result.count, skipped: skippedCount }
+        message: `${result.count} zone assignment(s) created.`,
+        data: { created: result.count },
       });
     }
 
-    // --- SCENARIO B: LOCATION-BASED ASSIGNMENT (Specific Nodes) ---
+    // --- SCENARIO B: LOCATION-BASED ASSIGNMENT ---
     const locations = await prisma.locations.findMany({
       where: { id: { in: location_ids.map((id) => BigInt(id)) } },
-      select: { id: true, name: true }, 
+      select: { id: true, name: true },
     });
-
-    if (locations.length !== location_ids.length) {
-      return res.status(404).json({ status: "error", message: "One or more selected locations could not be found." });
-    }
 
     const existingAssignments = await prisma.cleaner_assignments.findMany({
       where: {
         cleaner_user_id: BigInt(cleaner_user_id),
         location_id: { in: location_ids.map((id) => BigInt(id)) },
         company_id: BigInt(company_id),
-        status: 'assigned'
+        status: "assigned",
       },
       select: { location_id: true },
     });
 
-    const existingLocationIds = existingAssignments.map((a) => a.location_id.toString());
-    const locationsToAssign = locations.filter((loc) => !existingLocationIds.includes(loc.id.toString()));
+    const existingLocationIds = existingAssignments.map((a) =>
+      a.location_id.toString(),
+    );
+    const locationsToAssign = locations.filter(
+      (loc) => !existingLocationIds.includes(loc.id.toString()),
+    );
 
-    if (locationsToAssign.length === 0) {
-      return res.status(400).json({
-        status: "error",
-        message: "This user is already assigned to all selected locations.",
-        existingAssignments: existingLocationIds,
-      });
-    }
+    if (locationsToAssign.length === 0)
+      return res
+        .status(400)
+        .json({ status: "error", message: "Already assigned." });
 
     const assignmentsToCreate = locationsToAssign.map((location) => ({
       name: location.name,
       cleaner_user_id: BigInt(cleaner_user_id),
       company_id: BigInt(company_id),
-      type_id: null, 
+      type_id: null,
       location_id: location.id,
       status: status || "assigned",
       role_id: parsedRoleId,
     }));
 
-    const result = await prisma.cleaner_assignments.createMany({ data: assignmentsToCreate });
-
-    const skippedCount = locations.length - locationsToAssign.length;
-    let message = `${result.count} location assignment(s) created successfully.`;
-    if (skippedCount > 0) message += ` ${skippedCount} location(s) skipped (already assigned).`;
+    const result = await prisma.cleaner_assignments.createMany({
+      data: assignmentsToCreate,
+    });
 
     res.status(201).json({
       status: "success",
-      message: message,
-      data: { created: result.count, skipped: skippedCount, skippedLocationIds: existingLocationIds },
+      message: `${result.count} location assignment(s) created.`,
+      data: { created: result.count },
     });
   } catch (error) {
     console.error("Error creating assignments:", error);
     res.status(500).json({ status: "error", message: "Internal Server Error" });
   }
 };
-
 
 export const updateAssignment = async (req, res) => {
   try {
@@ -884,29 +921,43 @@ export const deleteAssignment = async (req, res) => {
 
 export const createAssignmentsForLocation = async (req, res) => {
   try {
-    const { location_id, cleaner_user_ids, company_id, status, role_id } = req.body;
+    const { location_id, cleaner_user_ids, company_id, status, role_id } =
+      req.body;
     const caller = req.user;
-    
+
     // --- 1. Validation ---
-    if (!location_id || !company_id || !cleaner_user_ids || !Array.isArray(cleaner_user_ids) || cleaner_user_ids.length === 0 || !role_id) {
-      return res.status(400).json({ status: "error", message: "Missing required fields." });
+    if (
+      !location_id ||
+      !company_id ||
+      !cleaner_user_ids ||
+      !Array.isArray(cleaner_user_ids) ||
+      cleaner_user_ids.length === 0 ||
+      !role_id
+    ) {
+      return res
+        .status(400)
+        .json({ status: "error", message: "Missing required fields." });
     }
 
     const parsedRoleId = parseInt(role_id);
 
     // --- 2. 🚨 SECURITY AUTHORIZATION CHECK 🚨 ---
     if (caller.role_id !== 1 && caller.role_id !== 2) {
-      const callerAllowedBigInts = await RBACFilterService.getAuthorizedLocationIds(caller.id, caller.company_id);
-      const callerAllowedIds = callerAllowedBigInts.map(id => id.toString());
+      const callerAllowedBigInts =
+        await RBACFilterService.getAuthorizedLocationIds(
+          caller.id,
+          caller.company_id,
+        );
+      const callerAllowedIds = callerAllowedBigInts.map((id) => id.toString());
 
       if (!callerAllowedIds.includes(location_id.toString())) {
         return res.status(403).json({
           status: "error",
-          message: "Forbidden: You are trying to assign users to a location you do not manage."
+          message:
+            "Forbidden: You are trying to assign users to a location you do not manage.",
         });
       }
     }
-    // --- END SECURITY CHECK ---
 
     const location = await prisma.locations.findUnique({
       where: { id: BigInt(location_id) },
@@ -914,7 +965,9 @@ export const createAssignmentsForLocation = async (req, res) => {
     });
 
     if (!location) {
-      return res.status(404).json({ status: "error", message: "Location not found." });
+      return res
+        .status(404)
+        .json({ status: "error", message: "Location not found." });
     }
 
     const existingAssignments = await prisma.cleaner_assignments.findMany({
@@ -922,12 +975,17 @@ export const createAssignmentsForLocation = async (req, res) => {
         location_id: BigInt(location_id),
         cleaner_user_id: { in: cleaner_user_ids.map((id) => BigInt(id)) },
         company_id: BigInt(company_id),
+        status: "assigned",
       },
       select: { cleaner_user_id: true },
     });
 
-    const existingCleanerIds = existingAssignments.map((a) => a.cleaner_user_id.toString());
-    const cleanersToAssign = cleaner_user_ids.filter((id) => !existingCleanerIds.includes(id.toString()));
+    const existingCleanerIds = existingAssignments.map((a) =>
+      a.cleaner_user_id.toString(),
+    );
+    const cleanersToAssign = cleaner_user_ids.filter(
+      (id) => !existingCleanerIds.includes(id.toString()),
+    );
 
     if (cleanersToAssign.length === 0) {
       return res.status(400).json({
@@ -937,62 +995,125 @@ export const createAssignmentsForLocation = async (req, res) => {
       });
     }
 
+    // --- 🚨 3. LIMIT CHECKS 🚨 ---
+
+    // Check A: MAX_CLEANERS_PER_WASHROOM
+    const maxPerWashroomLimit = await prisma.system_limits.findFirst({
+      where: {
+        limit_key: "MAX_CLEANERS_PER_WASHROOM",
+        company_id: BigInt(company_id),
+        is_enabled: true,
+      },
+    });
+
+    if (maxPerWashroomLimit) {
+      const currentCleanersAtLocation = await prisma.cleaner_assignments.count({
+        where: {
+          location_id: BigInt(location_id),
+          status: "assigned",
+          deleted_at: null,
+        },
+      });
+
+      if (
+        currentCleanersAtLocation + cleanersToAssign.length >
+        maxPerWashroomLimit.limit_value
+      ) {
+        return res.status(403).json({
+          status: "error",
+          message: `Limit Exceeded: This washroom can only have a maximum of ${maxPerWashroomLimit.limit_value} cleaners assigned. Currently has ${currentCleanersAtLocation}.`,
+        });
+      }
+    }
+
+    // Check B: MAX_WASHROOMS_PER_CLEANER (Check for each cleaner individually)
+    const maxPerCleanerLimit = await prisma.system_limits.findFirst({
+      where: {
+        limit_key: "MAX_WASHROOMS_PER_CLEANER",
+        company_id: BigInt(company_id),
+        is_enabled: true,
+      },
+    });
+
+    if (maxPerCleanerLimit) {
+      for (const cleanerId of cleanersToAssign) {
+        const cleanerAssignedCount = await prisma.cleaner_assignments.count({
+          where: {
+            cleaner_user_id: BigInt(cleanerId),
+            status: "assigned",
+            deleted_at: null,
+          },
+        });
+
+        if (cleanerAssignedCount + 1 > maxPerCleanerLimit.limit_value) {
+          return res.status(403).json({
+            status: "error",
+            message: `Limit Exceeded: User ID ${cleanerId} has already reached their maximum limit of ${maxPerCleanerLimit.limit_value} washrooms.`,
+          });
+        }
+      }
+    }
+    // --- END LIMIT CHECKS ---
+
     const assignmentsToCreate = cleanersToAssign.map((cleanerId) => ({
       name: location.name,
       cleaner_user_id: BigInt(cleanerId),
       company_id: BigInt(company_id),
-      type_id: null, 
+      type_id: null,
       location_id: location.id,
       role_id: parsedRoleId,
       status: status || "assigned",
-      // supervisor_id: BigInt(caller.id) // Optional tracking
     }));
 
-    const result = await prisma.cleaner_assignments.createMany({ data: assignmentsToCreate });
+    const result = await prisma.cleaner_assignments.createMany({
+      data: assignmentsToCreate,
+    });
 
     const skippedCount = cleaner_user_ids.length - cleanersToAssign.length;
     let message = `${result.count} user(s) assigned successfully.`;
-    if (skippedCount > 0) message += ` ${skippedCount} user(s) skipped (already assigned).`;
+    if (skippedCount > 0)
+      message += ` ${skippedCount} user(s) skipped (already assigned).`;
 
     res.status(201).json({
       status: "success",
       message: message,
-      data: { created: result.count, skipped: skippedCount, skippedCleanerIds: existingCleanerIds },
+      data: {
+        created: result.count,
+        skipped: skippedCount,
+        skippedCleanerIds: existingCleanerIds,
+      },
     });
   } catch (error) {
     console.error("Error creating assignments for location:", error);
     res.status(500).json({ status: "error", message: "Internal Server Error" });
   }
 };
-
 export const getAssignmentsByLocation = async (req, res) => {
   try {
     const { location_id } = req.params;
     const { company_id, role_id } = req.query;
 
-    console.log('Fetching assignments for location:', location_id);
+    console.log("Fetching assignments for location:", location_id);
     console.log(req.query, "query");
 
     if (!location_id) {
       return res.status(400).json({
         status: "error",
-        message: "Location ID is required"
+        message: "Location ID is required",
       });
     }
 
     // Build where clause
     const whereClause = {
-      location_id: BigInt(location_id)
+      location_id: BigInt(location_id),
     };
-
-
 
     if (company_id) {
       whereClause.company_id = BigInt(company_id);
     }
 
     if (role_id) {
-      whereClause.role_id = parseInt(role_id)
+      whereClause.role_id = parseInt(role_id);
     }
 
     // Fetch assignments with user details
@@ -1011,10 +1132,10 @@ export const getAssignmentsByLocation = async (req, res) => {
               select: {
                 id: true,
                 name: true,
-                description: true
-              }
-            }
-          }
+                description: true,
+              },
+            },
+          },
         },
         // supervisor: {
         //   select: {
@@ -1030,16 +1151,15 @@ export const getAssignmentsByLocation = async (req, res) => {
             name: true,
             address: true,
             city: true,
-            state: true
-          }
-        }
+            state: true,
+          },
+        },
       },
-      orderBy: { assigned_on: 'desc' }
+      orderBy: { assigned_on: "desc" },
     });
 
-
     // Serialize BigInt
-    const serializedAssignments = assignments.map(assignment => ({
+    const serializedAssignments = assignments.map((assignment) => ({
       ...assignment,
       id: assignment.id.toString(),
       cleaner_user_id: assignment.cleaner_user_id.toString(),
@@ -1047,41 +1167,43 @@ export const getAssignmentsByLocation = async (req, res) => {
       type_id: assignment.type_id?.toString(),
       location_id: assignment.location_id?.toString(),
       supervisor_id: assignment.supervisor_id?.toString(),
-      cleaner_user: assignment.cleaner_user ? {
-        ...assignment.cleaner_user,
-        id: assignment.cleaner_user.id.toString()
-      } : null,
+      cleaner_user: assignment.cleaner_user
+        ? {
+            ...assignment.cleaner_user,
+            id: assignment.cleaner_user.id.toString(),
+          }
+        : null,
       // supervisor: assignment.supervisor ? {
       //   ...assignment.supervisor,
       //   id: assignment.supervisor.id.toString()
       // } : null,
-      locations: assignment.locations ? {
-        ...assignment.locations,
-        id: assignment.locations.id.toString()
-      } : null
+      locations: assignment.locations
+        ? {
+            ...assignment.locations,
+            id: assignment.locations.id.toString(),
+          }
+        : null,
     }));
 
     res.status(200).json({
       status: "success",
       message: "Assignments retrieved successfully",
-      data: serializedAssignments
+      data: serializedAssignments,
     });
-
   } catch (error) {
     console.error("Error fetching assignments by location:", error);
     res.status(500).json({
       status: "error",
       message: "Internal Server Error",
-      detail: process.env.NODE_ENV === 'development' ? error.message : undefined
+      detail:
+        process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
 
-
-
 // In your assignments controller
 export const getAssignmentsByCleanerId = async (req, res) => {
-  console.log('hit the get assignemnt by cleaner id ')
+  console.log("hit the get assignemnt by cleaner id ");
   try {
     const { cleaner_user_id } = req.params;
     const { company_id, include_all_statuses } = req.query; // Add include_all_statuses
@@ -1092,12 +1214,12 @@ export const getAssignmentsByCleanerId = async (req, res) => {
     if (!cleaner_user_id) {
       return res.status(400).json({
         status: "error",
-        message: "Cleaner user ID is required"
+        message: "Cleaner user ID is required",
       });
     }
 
     const whereClause = {
-      cleaner_user_id: BigInt(cleaner_user_id)
+      cleaner_user_id: BigInt(cleaner_user_id),
     };
 
     if (company_id) {
@@ -1106,8 +1228,8 @@ export const getAssignmentsByCleanerId = async (req, res) => {
 
     // By default, only show assigned locations
     // Unless explicitly requested to include all statuses
-    if (include_all_statuses !== 'true') {
-      whereClause.status = 'assigned';
+    if (include_all_statuses !== "true") {
+      whereClause.status = "assigned";
     }
 
     const assignments = await prisma.cleaner_assignments.findMany({
@@ -1121,22 +1243,22 @@ export const getAssignmentsByCleanerId = async (req, res) => {
             city: true,
             state: true,
             latitude: true,
-            longitude: true
-          }
+            longitude: true,
+          },
         },
         supervisor: {
           select: {
             id: true,
             name: true,
             phone: true,
-            email: true
-          }
-        }
+            email: true,
+          },
+        },
       },
-      orderBy: { assigned_on: 'desc' }
+      orderBy: { assigned_on: "desc" },
     });
 
-    const serialized = assignments.map(a => ({
+    const serialized = assignments.map((a) => ({
       ...a,
       id: a.id.toString(),
       cleaner_user_id: a.cleaner_user_id.toString(),
@@ -1144,27 +1266,29 @@ export const getAssignmentsByCleanerId = async (req, res) => {
       type_id: a.type_id?.toString(),
       location_id: a.location_id?.toString(),
       supervisor_id: a.supervisor_id?.toString(),
-      locations: a.locations ? {
-        ...a.locations,
-        id: a.locations.id.toString()
-      } : null,
-      supervisor: a.supervisor ? {
-        ...a.supervisor,
-        id: a.supervisor.id.toString()
-      } : null
+      locations: a.locations
+        ? {
+            ...a.locations,
+            id: a.locations.id.toString(),
+          }
+        : null,
+      supervisor: a.supervisor
+        ? {
+            ...a.supervisor,
+            id: a.supervisor.id.toString(),
+          }
+        : null,
     }));
 
     res.status(200).json({
       status: "success",
-      data: serialized
+      data: serialized,
     });
-
   } catch (error) {
     console.error("Error fetching assignments by cleaner:", error);
     res.status(500).json({
       status: "error",
-      message: "Internal Server Error"
+      message: "Internal Server Error",
     });
   }
 };
-

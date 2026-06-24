@@ -13,47 +13,57 @@ import {
   getAllToiletsForWeb,
   getMapToilets,
 } from "../controller/LocationsController.js";
-import { upload, processAndUploadImages } from "../middlewares/imageUpload.js"
+import { upload, processAndUploadImages } from "../middlewares/imageUpload.js";
 import { verifyToken } from "../middlewares/authMiddleware.js";
-console.log('in get location rutes');
+import { checkLimit } from "../middlewares/limitMiddleware.js";
+console.log("in get location rutes");
 const getLocationRoutes = express.Router();
 
 // getLocationRoutes.get("/getUsers", getUser);
 // getLocationRoutes.get('/getLocations' , getLocation);
 getLocationRoutes.get("/loc", getAllToilets);
 getLocationRoutes.get("/", verifyToken, getAllToilets);
-getLocationRoutes.get("/saafai_locations", getAllToiletsForWeb)
-getLocationRoutes.get("/map",verifyToken, getMapToilets)
+getLocationRoutes.get("/saafai_locations", getAllToiletsForWeb);
+getLocationRoutes.get("/map", verifyToken, getMapToilets);
 
 // getLocationRoutes.post("/", createLocation);
 
 getLocationRoutes.get("/zones", getZonesWithToilets);
-getLocationRoutes.get('/nearby', getNearbyLocations);
+getLocationRoutes.get("/nearby", getNearbyLocations);
 getLocationRoutes.get("/:id", getToiletById);
 getLocationRoutes.get("/search", getSearchToilet);
 getLocationRoutes.delete("/:id/image", deleteLocationImage);
-getLocationRoutes.post('/status/:id', toggleStatusToilet)
+getLocationRoutes.post("/status/:id", toggleStatusToilet);
 // Add this route to your locations routes
-getLocationRoutes.delete('/:id', deleteLocationById);
-
+getLocationRoutes.delete("/:id", deleteLocationById);
 
 // getLocationRoutes.post("/update/:id", updateLocationById);
 
 // ✅ Routes with image upload support
-getLocationRoutes.post("/",
-  upload.fields([{ name: 'images', maxCount: 10 }]), // Support up to 10 images
+// getLocationRoutes.post("/",
+//   upload.fields([{ name: 'images', maxCount: 10 }]), // Support up to 10 images
+//   processAndUploadImages([
+//     { fieldName: 'images', folder: 'locations', maxCount: 10 }
+//   ]),
+//   createLocation
+// );
+getLocationRoutes.post(
+  "/",
+  upload.fields([{ name: "images", maxCount: 10 }]), // 2. Parse form-data so req.body is available
+  checkLimit("MAX_WASHROOMS"), // 3. 🚨 CHECK LIMIT NOW (Reads req.body.company_id)
   processAndUploadImages([
-    { fieldName: 'images', folder: 'locations', maxCount: 10 }
+    { fieldName: "images", folder: "locations", maxCount: 10 },
   ]),
-  createLocation
+  createLocation, // 4. Finally, create and increment limit
 );
 
-getLocationRoutes.post("/update/:id",
-  upload.fields([{ name: 'images', maxCount: 10 }]),
+getLocationRoutes.post(
+  "/update/:id",
+  upload.fields([{ name: "images", maxCount: 10 }]),
   processAndUploadImages([
-    { fieldName: 'images', folder: 'locations', maxCount: 10 }
+    { fieldName: "images", folder: "locations", maxCount: 10 },
   ]),
-  updateLocationById
+  updateLocationById,
 );
 
 // -------------- old routes ---------------

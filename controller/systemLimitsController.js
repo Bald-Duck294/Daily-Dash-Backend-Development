@@ -1,9 +1,7 @@
 import { PrismaClient } from "@prisma/client";
-import { safeSerialize } from "../utils/serializer.js"; // Tera custom serializer for BigInt
-
+import { serializeBigInt } from "../utils/serializer.js";
 const prisma = new PrismaClient();
 
-// 1. Set or Update a Limit (SuperAdmin Only)
 export const setLimit = async (req, res) => {
   try {
     const { company_id, limit_key, limit_value, is_enabled } = req.body;
