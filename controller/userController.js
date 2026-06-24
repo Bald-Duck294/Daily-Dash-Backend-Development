@@ -46,22 +46,19 @@ export async function getclientUser(req, res) {
     const loggedInUserId = BigInt(req.user.id);
     const loggedInUserRole = Number(req.user.role_id);
 
-    // 1. Get Base RBAC Filter (Assignment Logic)
+    // 1. Get Base RBAC Filter
     const userFilter = await RBACFilterService.getUserFilter(req.user, "getUser");
 
-    // ✅ FIX 1: Dynamic Role Exclusion (Updated)
-    // Zonal Admin (6) is permanently hidden from everyone.
-    // Admin (2) is hidden from standard users, but visible to high-level admins.
     const hiddenRoles = (loggedInUserRole === 1 || loggedInUserRole === 2) 
-      ? [6]       // Top-level admins see everyone EXCEPT Zonal Admins
-      : [2, 6];   // Everyone else has Admins and Zonal Admins hidden
+      ? [6]       
+      : [2, 6];   
 
     // 2. Base Where
     const baseWhere = { 
       deleted_at: null,
-      role_id: { notIn: hiddenRoles }, // Apply the dynamic hidden roles
+      role_id: { notIn: hiddenRoles }, 
       AND: [
-        { id: { not: loggedInUserId } } // Never show the logged-in user to themselves
+        { id: { not: loggedInUserId } }
       ]
     };
     
@@ -69,16 +66,14 @@ export async function getclientUser(req, res) {
       baseWhere.company_id = BigInt(companyId);
     }
 
-    // ✅ FIX 2: Merge Assignment logic with "Created By" logic
     if (loggedInUserRole === 3 || loggedInUserRole === 8) {
       baseWhere.AND.push({
         OR: [
-          userFilter, // Users they are assigned to manage
-          { created_by: loggedInUserId } // Users they created manually
+          userFilter, 
+          { created_by: loggedInUserId } 
         ]
       });
     } else {
-      // For Admin/Superadmin, just apply the standard user filter
       if (Object.keys(userFilter).length > 0) {
         baseWhere.AND.push(userFilter);
       }
@@ -86,8 +81,6 @@ export async function getclientUser(req, res) {
 
     // 3. Main Where
     const mainWhere = { ...baseWhere };
-    
-    // Safely copy the AND array so we don't accidentally overwrite the RBAC rules
     mainWhere.AND = [...baseWhere.AND];
 
     if (roleId && roleId !== "all") {
@@ -104,13 +97,8 @@ export async function getclientUser(req, res) {
       });
     }
 
-    // Safely clean up the AND array if it's empty to prevent Prisma syntax errors
-    if (mainWhere.AND.length === 0) {
-      delete mainWhere.AND;
-    }
-    if (baseWhere.AND && baseWhere.AND.length === 0) {
-      delete baseWhere.AND;
-    }
+    if (mainWhere.AND.length === 0) delete mainWhere.AND;
+    if (baseWhere.AND && baseWhere.AND.length === 0) delete baseWhere.AND;
 
     // 4. Execute Queries
     const [users, totalCount, roleCountsRaw] = await prisma.$transaction([
@@ -131,23 +119,30 @@ export async function getclientUser(req, res) {
       })
     ]);
 
-    // Format role counts
+    // Format role counts safely
     const roleCounts = roleCountsRaw.reduce((acc, item) => {
-      if (item.role_id) acc[item.role_id.toString()] = item._count._all;
+      if (item.role_id) acc[item.role_id.toString()] = Number(item._count._all);
       return acc;
     }, {});
 
-    // Format user IDs
-    const formattedUsers = users.map((user) => ({
-      ...user,
-      id: user.id.toString(),
-      company_id: user.company_id?.toString() || null,
-      created_by: user.created_by?.toString() || null,
-    }));
+    // --- 🚨 THE BULLETPROOF FIX 🚨 ---
+    // This helper recursively finds ANY BigInt in an object/array and makes it a String
+    const serializeBigInt = (obj) => {
+      if (typeof obj === 'bigint') return obj.toString();
+      if (Array.isArray(obj)) return obj.map(serializeBigInt);
+      if (obj !== null && typeof obj === 'object') {
+        // Handle Date objects safely so they don't get destroyed
+        if (obj instanceof Date) return obj.toISOString();
+        return Object.fromEntries(
+          Object.entries(obj).map(([key, value]) => [key, serializeBigInt(value)])
+        );
+      }
+      return obj;
+    };
 
-    // Return Data
-    res.status(200).json({
-      data: formattedUsers,
+    // Serialize everything before sending
+    const safeData = serializeBigInt({
+      data: users,
       roleCounts: roleCounts,
       meta: {
         totalCount: totalCount,
@@ -156,6 +151,9 @@ export async function getclientUser(req, res) {
         itemsPerPage: parsedLimit,
       },
     });
+
+    // Return Data
+    res.status(200).json(safeData);
 
   } catch (error) {
     console.error("Error fetching users with RBAC and Pagination:", error);

@@ -163,7 +163,7 @@ export const registerUser = async (req, res) => {
 // controllers/authController.js
 
 export const loginUser = async (req, res) => {
-  console.log('in login controller');
+  // console.log('in login controller');
   const { phone, password } = req.body;
 
   if (!phone || !password) {
@@ -241,8 +241,8 @@ export const loginUser = async (req, res) => {
       data: { token: token }
     });
 
-    console.log('✅ Login successful:', user.name, '(' + user.role.name + ')');
-    console.log('✅ Permissions included in token:', user.role.permissions.length);
+    // console.log('✅ Login successful:', user.name, '(' + user.role.name + ')');
+    // console.log('✅ Permissions included in token:', user.role.permissions.length);
 
     // Return success response
     res.json({
