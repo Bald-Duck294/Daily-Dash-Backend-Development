@@ -431,3 +431,17 @@ model odor_readings {
   air_status String?   @db.VarChar(50)
   wifi_rssi  Int?
 }
+
+model system_limits {
+  id            Int      @id @default(autoincrement())
+  company_id    BigInt?
+  limit_key     String   @db.VarChar(100)
+  limit_value   Int      @default(0)
+  current_value Int      @default(0)
+  is_enabled    Boolean  @default(true)
+  updated_by    BigInt?
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([company_id, limit_key], map: "system_limits_company_limit_key_unique")
+}

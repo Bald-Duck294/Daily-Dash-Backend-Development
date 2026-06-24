@@ -1,5 +1,7 @@
 import express from "express";
 import cors from "cors";
+import { initializeApp, cert, getApps } from "firebase-admin/app";
+import { getMessaging } from "firebase-admin/messaging";
 // import { verifyToken } from "./utils/jwt.js";
 
 import { verifyToken } from "./middlewares/authMiddleware.js";
@@ -26,9 +28,16 @@ import shiftAssign_router from "./routes/shiftAssignRoutes.js";
 import dropdownlist_router from "./routes/dropdownlist.route.js";
 import getPhotoRoutes from "./routes/photoRoute.js";
 import iotRoutes from "./routes/iotRoutes.js";
-import getattendanceRoute from "./routes/attendanceRoute.js" 
+import getattendanceRoute from "./routes/attendanceRoute.js";
+import serviceAccount from "./safai-ai-firebase-adminsdk.json" with { type: "json" };
+
 dotenv.config();
 
+if (getApps().length === 0) {
+  initializeApp({
+    credential: cert(serviceAccount),
+  });
+}
 const app = express();
 app.use(express.json());
 
@@ -108,6 +117,44 @@ app.use((err, req, res, next) => {
 
 app.get("/", (req, res) => {
   res.send("Hi there, Your server has successfully started");
+});
+
+// 2. The Push Notification Endpoint
+app.post("/api/send-push", async (req, res) => {
+  // fcmToken is the token you get from your frontend hook
+  const { fcmToken, title, body, type, taskId, reviewId } = req.body;
+
+  if (!fcmToken) {
+    return res.status(400).json({ error: "fcmToken is required" });
+  }
+
+  // 🚨 THIS IS THE MAGIC 🚨
+  // Notice there is NO "notification" object here.
+  // It is ONLY a "data" object. This forces Android to stay quiet
+  // and lets your Service Worker draw the custom mascot notification.
+  const message = {
+    token: fcmToken,
+    data: {
+      title: title || "Custom Safai Test",
+      body: body || "This is a data-only test notification.",
+      type: type || "task",
+      taskId: taskId || "12345",
+      reviewId: reviewId || "",
+    },
+  };
+
+  try {
+    const response = await getMessaging().send(message);
+    console.log("Successfully sent message:", response);
+    res.status(200).json({
+      success: true,
+      message: "Data-only push sent successfully!",
+      firebaseResponse: response,
+    });
+  } catch (error) {
+    console.error("Error sending message:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 // Error handling middleware (add BEFORE app.listen)
