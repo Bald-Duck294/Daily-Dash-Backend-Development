@@ -241,9 +241,9 @@ export async function getCleanerReviews(req, res) {
 }
 
 export const getCleanerReviewsById = async (req, res) => {
-  console.log('Getting cleaner reviews by cleaner_user_id');
+  // console.log('Getting cleaner reviews by cleaner_user_id');
   const { cleaner_user_id } = req.params;
-  console.log(req.params, "params");
+  // console.log(req.params, "params");
 
   let stats = {};
   try {
@@ -397,13 +397,13 @@ export const getCleanerReviewsById = async (req, res) => {
 
 // Get cleaner reviews by location_id
 export const getCleanerReviewsByLocationId = async (req, res) => {
-  console.log('Getting cleaner reviews by location_id');
+  // console.log('Getting cleaner reviews by location_id');
 
   const { location_id } = req.params;
   const { company_id, take, skip } = req.query;
 
-  console.log('Location ID:', location_id);
-  console.log('Company ID:', company_id);
+  // console.log('Location ID:', location_id);
+  // console.log('Company ID:', company_id);
 
   try {
     // Input validation
@@ -532,7 +532,7 @@ export const getCleanerReviewsByLocationId = async (req, res) => {
       latest_review: serializedReviews[0] || null
     };
 
-    console.log(`Successfully fetched ${serializedReviews.length} reviews for location ${location_id}`);
+    // console.log(`Successfully fetched ${serializedReviews.length} reviews for location ${location_id}`);
 
     res.json({
       status: "success",
@@ -840,13 +840,13 @@ export async function completeCleanerReview(req, res) {
 // const FormData = require('form-data'); // Must import this for Node.js
 
 async function processHygieneScoring(review, afterPhotos) {
-  console.log('\n========================================');
-  console.log('🚀 HYGIENE SCORING PROCESS STARTED');
-  console.log('========================================');
-  console.log('📋 Review ID:', review.id);
-  console.log('📸 Total after photos:', afterPhotos.length);
-  console.log('🔗 Photo URLs:', afterPhotos);
-  console.log('========================================\n');
+  // console.log('\n========================================');
+  // console.log('🚀 HYGIENE SCORING PROCESS STARTED');
+  // console.log('========================================');
+  // console.log('📋 Review ID:', review.id);
+  // console.log('📸 Total after photos:', afterPhotos.length);
+  // console.log('🔗 Photo URLs:', afterPhotos);
+  // console.log('========================================\n');
 
   // ✅ Helper: Convert 0-100 scale to 1-10 scale
   const convertScoreTo10Scale = (score) => {
@@ -865,7 +865,7 @@ async function processHygieneScoring(review, afterPhotos) {
 
   // ✅ Helper: Validate AI response structure
   const validateAIResponse = (data) => {
-    console.log('🔍 Validating AI response...');
+    // console.log('🔍 Validating AI response...');
 
     if (!Array.isArray(data)) {
       throw new Error('Response is not an array');
@@ -886,10 +886,10 @@ async function processHygieneScoring(review, afterPhotos) {
       throw new Error(`Invalid items at indices: ${invalidItems.join(', ')}`);
     }
 
-    console.log('✅ Response validation passed');
-    console.log(`📊 Received ${data.length} scores`);
+    // console.log('✅ Response validation passed');
+    // console.log(`📊 Received ${data.length} scores`);
     data.forEach(item => {
-      console.log(`   - ${item.filename}: ${item.score}/10 (status: ${item.status})`);
+      // console.log(`   - ${item.filename}: ${item.score}/10 (status: ${item.status})`);
     });
 
     return true;
@@ -897,7 +897,7 @@ async function processHygieneScoring(review, afterPhotos) {
 
   // ✅ Helper: Generate fake scores (fallback)
   const generateFakeScores = (imageUrls) => {
-    console.log(`\n🎲 Generating fake scores for ${imageUrls.length} images...`);
+    // console.log(`\n🎲 Generating fake scores for ${imageUrls.length} images...`);
     return imageUrls.map((url, index) => ({
       score: Math.floor(Math.random() * (10 - 6 + 1)) + 6,
       metadata: {
@@ -1170,7 +1170,7 @@ async function processHygieneScoring(review, afterPhotos) {
           console.log('   Message:', formDataError.message);
           console.log('   Stack:', formDataError.stack);
         }
-        console.log('========================================\n');
+        // console.log('========================================\n');
 
         throw formDataError; // Trigger fallback to fake scores
       }
@@ -1180,39 +1180,39 @@ async function processHygieneScoring(review, afterPhotos) {
     if (scoreData.length > 0) {
       await saveScoresToDatabase(scoreData, review);
 
-      console.log('\n✅ HYGIENE SCORING COMPLETED SUCCESSFULLY');
-      console.log('========================================\n');
+      // console.log('\n✅ HYGIENE SCORING COMPLETED SUCCESSFULLY');
+      // console.log('========================================\n');
     }
 
   } catch (finalError) {
     // ===== FALLBACK: GENERATE FAKE SCORES =====
-    console.log('\n🔴 ALL METHODS FAILED - Using Fallback');
-    console.log('========================================');
-    console.log('Error Summary:', {
-      message: finalError.message,
-      type: finalError.constructor.name,
-      code: finalError.code
-    });
-    console.log('========================================\n');
+    // console.log('\n🔴 ALL METHODS FAILED - Using Fallback');
+    // console.log('========================================');
+    // console.log('Error Summary:', {
+    //   message: finalError.message,
+    //   type: finalError.constructor.name,
+    //   code: finalError.code
+    // });
+    // console.log('========================================\n');
 
     try {
-      console.log('🎲 Generating fake scores as fallback...');
+      // console.log('🎲 Generating fake scores as fallback...');
       const fakeScores = generateFakeScores(afterPhotos);
 
       await saveScoresToDatabase(fakeScores, review);
 
-      console.log('\n✅ FALLBACK COMPLETED - Fake scores saved');
-      console.log('========================================\n');
+      // console.log('\n✅ FALLBACK COMPLETED - Fake scores saved');
+      // console.log('========================================\n');
 
     } catch (fakeError) {
-      console.log('\n🔴 CRITICAL: FALLBACK FAILED');
-      console.log('========================================');
+      // console.log('\n🔴 CRITICAL: FALLBACK FAILED');
+      // console.log('========================================');
       console.error('Unable to save even fake scores:', {
         message: fakeError.message,
         stack: fakeError.stack,
         code: fakeError.code
       });
-      console.log('========================================\n');
+      // console.log('========================================\n');
     }
   }
 }

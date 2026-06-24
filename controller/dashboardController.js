@@ -683,3 +683,539 @@ export const getTodaysActivities = async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 };
+
+// export const getWashroomHygieneHeatmap = async (req, res) => {
+//     console.log('🔍 Generating Washroom Hygiene Heatmap');
+//     try {
+//         const { company_id, start_date, end_date, type_id } = req.query;
+        
+//         // ✅ 1. Get authenticated user
+//         const user = req.user;
+//         if (!user) {
+//             return res.status(401).json({
+//                 status: "error",
+//                 message: "Unauthorized: User information is missing."
+//             });
+//         }
+
+//         console.log('📥 Request Params:', { company_id, start_date, end_date, type_id, user_id: user.id, role: user.role_id });
+
+//         // ✅ VALIDATION
+//         if (!company_id) {
+//             return res.status(400).json({
+//                 status: "error",
+//                 message: "company_id is required"
+//             });
+//         }
+
+//         if (!start_date || !end_date) {
+//             return res.status(400).json({
+//                 status: "error",
+//                 message: "start_date and end_date are required"
+//             });
+//         }
+
+//         // Parse dates
+//         const startDateTime = new Date(start_date);
+//         const endDateTime = new Date(end_date);
+//         endDateTime.setHours(23, 59, 59, 999);
+
+//         if (startDateTime > endDateTime) {
+//             return res.status(400).json({
+//                 status: "error",
+//                 message: "start_date must be before or equal to end_date"
+//             });
+//         }
+
+//         // ✅ Fetch company details
+//         const company = await prisma.companies.findUnique({
+//             where: { id: BigInt(company_id) },
+//             select: { name: true }
+//         });
+
+//         if (!company) {
+//             return res.status(404).json({
+//                 status: "error",
+//                 message: "Company not found"
+//             });
+//         }
+
+//         // ✅ STEP 1: Build Base Location Query
+//         const locationWhereClause = {
+//             company_id: BigInt(company_id),
+//             status: true,
+//             deleted_at: null
+//         };
+
+//         if (type_id && type_id !== 'undefined') {
+//             locationWhereClause.type_id = BigInt(type_id);
+//         }
+
+//         // ✅ STEP 2: Apply RBAC (Role-Based Access Control)
+//         // Assuming Role 1 = Super Admin. Adjust the ID according to your actual DB roles.
+//         const SUPER_ADMIN_ROLE_ID = 1; 
+        
+//         if (user.role_id !== SUPER_ADMIN_ROLE_ID) {
+//             // If NOT a Super Admin, restrict locations to only those assigned to this specific user.
+//             // This OR array handles both direct assignments and zone-based assignments.
+//             locationWhereClause.OR = [
+//                 {
+//                     // 1. User is directly assigned to the washroom (e.g., as a cleaner or supervisor)
+//                     cleaner_assignments: {
+//                         some: {
+//                             cleaner_user: { id: user.id },
+//                             status: 'assigned',
+//                             deleted_at: null
+//                         }
+//                     }
+//                 },
+//                 {
+//                     // 2. User is assigned as a Facility Admin to the washroom's specific Zone
+//                     // (Adjust 'zone' and 'facility_admin_assignments' to match your exact Prisma schema relations)
+//                     zone: {
+//                         facility_admin_assignments: {
+//                             some: {
+//                                 user_id: user.id,
+//                                 deleted_at: null
+//                             }
+//                         }
+//                     }
+//                 }
+//             ];
+//         }
+
+//         // ✅ STEP 3: Fetch filtered washrooms
+//         const washrooms = await prisma.locations.findMany({
+//             where: locationWhereClause,
+//             include: {
+//                 location_types: {
+//                     select: {
+//                         name: true
+//                     }
+//                 }
+//             },
+//             orderBy: { name: 'asc' }
+//         });
+
+//         console.log(`✅ Found ${washrooms.length} accessible washrooms for user ${user.id}`);
+
+//         if (washrooms.length === 0) {
+//             return res.status(200).json({
+//                 status: "success",
+//                 message: "No washrooms found for your access level",
+//                 metadata: {
+//                     report_type: "Washroom Hygiene Heatmap",
+//                     organization: company.name,
+//                     generated_on: new Date().toISOString(),
+//                     date_range: { start: start_date, end: end_date },
+//                     total_days: 0,
+//                     total_washrooms: 0,
+//                     overall_avg_score: 0,
+//                     date_columns: []
+//                 },
+//                 data: [],
+//                 count: 0
+//             });
+//         }
+
+//         const washroomIds = washrooms.map(w => w.id);
+
+//         // ✅ STEP 4: Get assigned cleaners specifically for display purposes
+//         const assignments = await prisma.cleaner_assignments.findMany({
+//             where: {
+//                 location_id: { in: washroomIds },
+//                 status: 'assigned',
+//                 deleted_at: null,
+//                 role_id: 5, // Cleaner role
+//                 cleaner_user: {
+//                     deleted_at: null
+//                 }
+//             },
+//             include: {
+//                 cleaner_user: {
+//                     select: {
+//                         id: true,
+//                         name: true,
+//                         phone: true
+//                     }
+//                 }
+//             }
+//         });
+
+//         // Group assignments by location
+//         const assignmentsByLocation = new Map();
+//         assignments.forEach(assignment => {
+//             const locId = assignment.location_id?.toString();
+//             if (!locId || !assignment.cleaner_user) return;
+
+//             if (!assignmentsByLocation.has(locId)) {
+//                 assignmentsByLocation.set(locId, []);
+//             }
+
+//             assignmentsByLocation.get(locId).push({
+//                 id: assignment.cleaner_user.id.toString(),
+//                 name: assignment.cleaner_user.name,
+//                 phone: assignment.cleaner_user.phone
+//             });
+//         });
+
+//         // ✅ STEP 5: Fetch hygiene scores for date range
+//         const hygieneScores = await prisma.hygiene_scores.findMany({
+//             where: {
+//                 location_id: { in: washroomIds },
+//                 inspected_at: {
+//                     gte: startDateTime,
+//                     lte: endDateTime
+//                 }
+//             },
+//             select: {
+//                 location_id: true,
+//                 score: true,
+//                 inspected_at: true
+//             },
+//             orderBy: {
+//                 inspected_at: 'asc'
+//             }
+//         });
+
+//         console.log(`📊 Found ${hygieneScores.length} hygiene score records`);
+
+//         // ✅ STEP 6: Group scores by location + date
+//         const scoresByLocationAndDate = new Map();
+//         const allScoresByLocation = new Map();
+
+//         hygieneScores.forEach(record => {
+//             if (!record.location_id || record.score == null) return;
+
+//             const locId = record.location_id.toString();
+//             const dateStr = new Date(record.inspected_at).toISOString().split('T')[0];
+//             const key = `${locId}_${dateStr}`;
+
+//             if (!scoresByLocationAndDate.has(key)) {
+//                 scoresByLocationAndDate.set(key, []);
+//             }
+
+//             scoresByLocationAndDate.get(key).push({
+//                 score: Number(record.score),
+//                 timestamp: record.inspected_at
+//             });
+
+//             // Track all scores for overall average computation
+//             if (!allScoresByLocation.has(locId)) {
+//                 allScoresByLocation.set(locId, []);
+//             }
+//             allScoresByLocation.get(locId).push(Number(record.score));
+//         });
+
+//         // Get LATEST score per location per day
+//         const latestScorePerDay = new Map();
+//         scoresByLocationAndDate.forEach((scores, key) => {
+//             const sortedScores = scores.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+//             latestScorePerDay.set(key, parseFloat(sortedScores[0].score.toFixed(2)));
+//         });
+
+//         // ✅ STEP 7: Generate date columns
+//         const dateColumns = [];
+//         const dateColumnsFormatted = [];
+//         const currentDate = new Date(startDateTime);
+
+//         while (currentDate <= endDateTime) {
+//             const dateStr = currentDate.toISOString().split('T')[0]; 
+//             dateColumns.push(dateStr);
+
+//             // Using just the day number to match the frontend UI requirement (1, 2, 3...)
+//             const formatted = currentDate.toLocaleDateString('en-GB', { day: 'numeric' });
+//             dateColumnsFormatted.push(formatted);
+
+//             currentDate.setDate(currentDate.getDate() + 1);
+//         }
+
+//         const totalDays = dateColumns.length;
+
+//         // ✅ STEP 8: Build final report data
+//         const reportData = washrooms.map((washroom, index) => {
+//             const washroomId = washroom.id.toString();
+//             const assignedCleaners = assignmentsByLocation.get(washroomId) || [];
+
+//             const dailyScores = {};
+//             dateColumns.forEach(dateStr => {
+//                 const key = `${washroomId}_${dateStr}`;
+//                 const latestScore = latestScorePerDay.get(key);
+//                 dailyScores[dateStr] = latestScore !== undefined ? latestScore : null;
+//             });
+
+//             // Calculate overall average
+//             const allScores = allScoresByLocation.get(washroomId) || [];
+//             const averageScore = allScores.length > 0
+//                 ? parseFloat((allScores.reduce((sum, s) => sum + s, 0) / allScores.length).toFixed(2))
+//                 : null; // Sending null instead of 0 if no inspections occurred
+
+//             return {
+//                 sr_no: index + 1,
+//                 washroom_id: washroomId,
+//                 washroom_name: washroom.name,
+//                 zone_type: washroom.location_types?.name || "N/A",
+//                 assigned_cleaners: assignedCleaners.map(c => c.name),
+//                 assigned_cleaners_ids: assignedCleaners.map(c => c.id),
+//                 daily_scores: dailyScores,
+//                 average_score: averageScore,
+//                 address: washroom.address || "N/A",
+//                 city: washroom.city || "N/A"
+//             };
+//         });
+
+//         // ✅ STEP 9: Calculate overall metrics
+//         const totalWashrooms = reportData.length;
+//         // Only average washrooms that actually have an average_score
+//         const washroomsWithScores = reportData.filter(w => w.average_score !== null);
+//         const overallAvgScore = washroomsWithScores.length > 0
+//             ? parseFloat((washroomsWithScores.reduce((sum, w) => sum + w.average_score, 0) / washroomsWithScores.length).toFixed(2))
+//             : 0;
+
+//         // ✅ STEP 10: Return response
+//         res.status(200).json({
+//             status: "success",
+//             message: "Washroom Hygiene Heatmap generated successfully",
+//             metadata: {
+//                 report_type: "Washroom Hygiene Heatmap",
+//                 organization: company.name,
+//                 generated_on: new Date().toISOString(),
+//                 user_role_id: user.role_id,
+//                 date_range: {
+//                     start: start_date,
+//                     end: end_date
+//                 },
+//                 total_days: totalDays,
+//                 total_washrooms: totalWashrooms,
+//                 overall_avg_score: overallAvgScore,
+//                 date_columns: dateColumnsFormatted // Passes [1, 2, 3...] to match the UI columns
+//             },
+//             data: reportData,
+//             count: totalWashrooms
+//         });
+
+//     } catch (error) {
+//         console.error("❌ Error generating washroom hygiene heatmap:", error);
+//         res.status(500).json({
+//             status: "error",
+//             message: "Failed to generate washroom hygiene heatmap",
+//             error: process.env.NODE_ENV === "development" ? error.message : undefined,
+//         });
+//     }
+// };
+
+// controllers/reportController.js (or wherever this is located)
+
+export const getWashroomHygieneHeatmap = async (req, res) => {
+    console.log('🔍 Generating Washroom Hygiene Heatmap');
+    try {
+        const { company_id, start_date, end_date, type_id } = req.query;
+        const user = req.user;
+
+        if (!user) {
+            return res.status(401).json({ status: "error", message: "Unauthorized" });
+        }
+
+        // Parse dates
+        const startDateTime = new Date(start_date);
+        const endDateTime = new Date(end_date);
+        endDateTime.setHours(23, 59, 59, 999);
+
+        // Fetch company
+        const company = await prisma.companies.findUnique({
+            where: { id: BigInt(company_id) },
+            select: { name: true }
+        });
+
+        // ✅ STEP 1: Base Location Query
+     const locationWhereClause = {
+            company_id: BigInt(company_id),
+            status: true,
+            deleted_at: null
+        };
+
+        if (type_id && type_id !== 'undefined') {
+            locationWhereClause.type_id = BigInt(type_id);
+        }
+
+        // ✅ STEP 2: Apply RBAC (Role-Based Access Control) using your existing service
+        const SUPER_ADMIN_ROLE_ID = 1; // Adjust if needed
+
+        if (Number(user.role_id) !== SUPER_ADMIN_ROLE_ID) {
+            console.log(`🛡️ Applying RBAC for User ID: ${user.id}`);
+            
+            try {
+                // Using the exact service call from your original code
+                const roleFilter = await RBACFilterService.getLocationFilter(user, "washroom_daily_scores");
+                
+                if (roleFilter) {
+                    Object.assign(locationWhereClause, roleFilter);
+                    console.log("✅ RBAC Filter Applied successfully.");
+                }
+            } catch (rbacError) {
+                console.error("❌ RBAC Filter Service Error:", rbacError);
+                return res.status(500).json({ 
+                    status: "error", 
+                    message: "Failed to apply user permissions." 
+                });
+            }
+        } else {
+            console.log("🔓 Super Admin detected. Fetching all washrooms.");
+        }
+
+        // ✅ STEP 3: Fetch filtered washrooms
+        const washrooms = await prisma.locations.findMany({
+            where: locationWhereClause,
+            include: { location_types: { select: { name: true } } },
+            orderBy: { name: 'asc' }
+        });
+
+        // If no washrooms are assigned to this Facility Admin, return empty early
+        if (washrooms.length === 0) {
+            return res.status(200).json({
+                status: "success",
+                message: "No washrooms allocated to this user.",
+                metadata: {
+                    report_type: "Washroom Hygiene Heatmap",
+                    organization: company?.name || "Unknown",
+                    generated_on: new Date().toISOString(),
+                    total_days: 0,
+                    total_washrooms: 0,
+                    overall_avg_score: 0,
+                    date_columns: []
+                },
+                data: [],
+                count: 0
+            });
+        }
+
+        const washroomIds = washrooms.map(w => w.id);
+
+        // ✅ STEP 4: Get assigned cleaners for UI display
+        const assignments = await prisma.cleaner_assignments.findMany({
+            where: {
+                location_id: { in: washroomIds },
+                status: 'assigned',
+                deleted_at: null,
+                role_id: 5,
+                cleaner_user: { deleted_at: null }
+            },
+            include: { cleaner_user: { select: { id: true, name: true, phone: true } } }
+        });
+
+        const assignmentsByLocation = new Map();
+        assignments.forEach(assignment => {
+            const locId = assignment.location_id?.toString();
+            if (!assignmentsByLocation.has(locId)) assignmentsByLocation.set(locId, []);
+            assignmentsByLocation.get(locId).push({
+                id: assignment.cleaner_user.id.toString(),
+                name: assignment.cleaner_user.name,
+                phone: assignment.cleaner_user.phone
+            });
+        });
+
+        // ✅ STEP 5: Fetch hygiene scores
+        const hygieneScores = await prisma.hygiene_scores.findMany({
+            where: {
+                location_id: { in: washroomIds },
+                inspected_at: { gte: startDateTime, lte: endDateTime }
+            },
+            select: { location_id: true, score: true, inspected_at: true },
+            orderBy: { inspected_at: 'asc' }
+        });
+
+        const scoresByLocationAndDate = new Map();
+        const allScoresByLocation = new Map();
+
+        hygieneScores.forEach(record => {
+            if (!record.location_id || record.score == null) return;
+            const locId = record.location_id.toString();
+            const dateStr = new Date(record.inspected_at).toISOString().split('T')[0];
+            const key = `${locId}_${dateStr}`;
+
+            if (!scoresByLocationAndDate.has(key)) scoresByLocationAndDate.set(key, []);
+            scoresByLocationAndDate.get(key).push({
+                score: Number(record.score),
+                timestamp: record.inspected_at
+            });
+
+            if (!allScoresByLocation.has(locId)) allScoresByLocation.set(locId, []);
+            allScoresByLocation.get(locId).push(Number(record.score));
+        });
+
+        const latestScorePerDay = new Map();
+        scoresByLocationAndDate.forEach((scores, key) => {
+            const sortedScores = scores.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            latestScorePerDay.set(key, parseFloat(sortedScores[0].score.toFixed(2)));
+        });
+
+        // ✅ STEP 6: Generate date columns
+        const dateColumns = [];
+        const dateColumnsFormatted = [];
+        const currentDate = new Date(startDateTime);
+
+        while (currentDate <= endDateTime) {
+            const dateStr = currentDate.toISOString().split('T')[0]; 
+            dateColumns.push(dateStr);
+            dateColumnsFormatted.push(currentDate.toLocaleDateString('en-GB', { day: 'numeric' }));
+            currentDate.setDate(currentDate.getDate() + 1);
+        }
+
+        // ✅ STEP 7: Build final report data
+        const reportData = washrooms.map((washroom, index) => {
+            const washroomId = washroom.id.toString();
+            const assignedCleaners = assignmentsByLocation.get(washroomId) || [];
+
+            const dailyScores = {};
+            dateColumns.forEach(dateStr => {
+                const key = `${washroomId}_${dateStr}`;
+                const latestScore = latestScorePerDay.get(key);
+                dailyScores[dateStr] = latestScore !== undefined ? latestScore : null;
+            });
+
+            const allScores = allScoresByLocation.get(washroomId) || [];
+            const averageScore = allScores.length > 0
+                ? parseFloat((allScores.reduce((sum, s) => sum + s, 0) / allScores.length).toFixed(2))
+                : null;
+
+            return {
+                sr_no: index + 1,
+                washroom_id: washroomId,
+                washroom_name: washroom.name,
+                zone_type: washroom.location_types?.name || "N/A",
+                assigned_cleaners: assignedCleaners.map(c => c.name),
+                assigned_cleaners_ids: assignedCleaners.map(c => c.id),
+                daily_scores: dailyScores,
+                average_score: averageScore,
+                address: washroom.address || "N/A",
+                city: washroom.city || "N/A"
+            };
+        });
+
+        const washroomsWithScores = reportData.filter(w => w.average_score !== null);
+        const overallAvgScore = washroomsWithScores.length > 0
+            ? parseFloat((washroomsWithScores.reduce((sum, w) => sum + w.average_score, 0) / washroomsWithScores.length).toFixed(2))
+            : 0;
+
+        // ✅ STEP 8: Return response
+        res.status(200).json({
+            status: "success",
+            message: "Washroom Hygiene Heatmap generated successfully",
+            metadata: {
+                report_type: "Washroom Hygiene Heatmap",
+                organization: company.name,
+                generated_on: new Date().toISOString(),
+                total_days: dateColumns.length,
+                total_washrooms: reportData.length,
+                overall_avg_score: overallAvgScore,
+                date_columns: dateColumnsFormatted
+            },
+            data: reportData,
+            count: reportData.length
+        });
+
+    } catch (error) {
+        console.error("❌ Error:", error);
+        res.status(500).json({ status: "error", message: "Failed to generate heatmap" });
+    }
+};
