@@ -1,3 +1,4 @@
+import RBACFilterService from "../utils/rbacFilterService.js";
 export const requireLocationAccess = async (req, res, next) => {
   try {
     // 1. SUPER ADMIN BYPASS: Let them through immediately if role ID is 1
