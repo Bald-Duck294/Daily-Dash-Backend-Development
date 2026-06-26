@@ -30,6 +30,7 @@ import getPhotoRoutes from "./routes/photoRoute.js";
 import iotRoutes from "./routes/iotRoutes.js";
 import getattendanceRoute from "./routes/attendanceRoute.js";
 import systemLimitsRouter from "./routes/systemLimitsRoutes.js";
+import workspaceRouter from "./routes/workspaceRoutes.js";
 dotenv.config();
 
 // ✅ NAYA FIREBASE INITIALIZATION LOGIC (.env se read karega)
@@ -123,6 +124,7 @@ app.use("/api/shifts-assign", shiftAssign_router);
 app.use("/api/photo", getPhotoRoutes);
 app.use("/api/attendance", getattendanceRoute);
 app.use("/api/limits", systemLimitsRouter);
+app.use("/api/workspace", workspaceRouter);
 app.use("/uploads", express.static("uploads"));
 // app.use("/api", registered_users_router);
 
