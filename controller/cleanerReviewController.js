@@ -190,12 +190,15 @@ export async function getCleanerReviews(req, res) {
           created_at: true,
           before_photo: true, // <-- Fetched for evidence logs
           after_photo: true,  // <-- ADDED: Fetched for evidence logs
+          score:true,
           cleaner_user: {
             select: {id:true, name: true }
           },
           location: {
             select: { name: true }
-          }
+          },
+       
+          
         },
         orderBy: {
           created_at: 'desc'
