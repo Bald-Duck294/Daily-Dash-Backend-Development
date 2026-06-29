@@ -151,25 +151,44 @@ export const deleteCompany = async (req, res) => {
 };
 
 // controllers/companyController.js
+
 export const setupCompany = async (req, res) => {
   try {
-    const { organization_name, organization_type, operation_structure } =
-      req.body;
-    const companyId = req.user.company_id;
+    // 1. SAFELY HANDLE VERCEL'S STRINGIFIED BODY BEHAVIOR
+    let payload = req.body;
+    if (typeof payload === "string") {
+      try {
+        payload = JSON.parse(payload);
+      } catch (e) {
+        console.error("Failed to parse stringified body on Vercel:", e);
+      }
+    }
 
-    console.log(
-      "Company ID from token:",
+    // 2. DESTRUCTURE FROM THE SAFELY PARSED PAYLOAD
+    const { organization_name, organization_type, operation_structure } =
+      payload || {};
+    const companyId = req.user?.company_id;
+
+    console.log("Vercel Debug - Extracted Data:", {
       organization_name,
       organization_type,
       operation_structure,
       companyId,
-    );
+    });
+
     if (!companyId) return res.status(401).json({ error: "Unauthorized" });
+
+    // 3. CHECK FOR MISSING FIELDS
     if (!organization_name || !organization_type || !operation_structure) {
-      console.log(error, "error ");
-      return res.status(400).json({ error: "All fields are required" });
+      // 🚨 FIX: Removed 'console.log(error)' which causes a ReferenceError
+      return res.status(400).json({
+        error: "All fields are required.",
+        // Send back the payload Vercel received so you can see it in your Frontend Network tab!
+        debug_vercel_payload: payload,
+      });
     }
 
+    // 4. UPDATE DATABASE
     const updatedCompany = await prisma.companies.update({
       where: { id: BigInt(companyId) },
       data: {
@@ -187,7 +206,6 @@ export const setupCompany = async (req, res) => {
       data: serializeBigInt(updatedCompany),
     });
   } catch (error) {
-    console.log("Error in setupCompany:", error);
     console.error("Company Setup Error:", error);
     res.status(500).json({ error: "Failed to save company profile" });
   }
