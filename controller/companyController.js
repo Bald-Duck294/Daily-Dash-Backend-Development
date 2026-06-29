@@ -157,8 +157,16 @@ export const setupCompany = async (req, res) => {
       req.body;
     const companyId = req.user.company_id;
 
+    console.log(
+      "Company ID from token:",
+      organization_name,
+      organization_type,
+      operation_structure,
+      companyId,
+    );
     if (!companyId) return res.status(401).json({ error: "Unauthorized" });
     if (!organization_name || !organization_type || !operation_structure) {
+      console.log(error, "error ");
       return res.status(400).json({ error: "All fields are required" });
     }
 
