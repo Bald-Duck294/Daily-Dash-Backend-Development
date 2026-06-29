@@ -5,33 +5,6 @@ import {
 } from "../utils/pagination.js";
 import { serializeBigInt } from "../utils/serializer.js";
 
-// @desc    Create a new company
-// @route   POST /api/companies
-// @access  Public
-
-// export const getAllCompanies = async (req, res) => {
-//   const { page = 1, limit = 10 } = req.query;
-//   try {
- 
-
-//     const { data, meta } = await paginateWithPrisma(prisma.companies, {
-//       orderBy: {
-//         created_at: "desc",
-//       },
-//       page: parseInt(page),
-//       limit: parseInt(limit),
-//     });
-
-//     res.status(200).json({
-//       data: serializeBigInt(data),
-//       pagination: meta,
-//     });
-//   } catch (error) {
-//     console.error("Error fetching companies:", error);
-//     res.status(500).json({ message: "Failed to fetch companies" });
-//   }
-// };
-
 export const getAllCompanies = async (req, res) => {
   // 1. Parse query parameters with fallbacks
   const page = parseInt(req.query.page, 10) || 1;
@@ -68,7 +41,7 @@ export const getCompaniesCount = async (req, res) => {
   try {
     const totalCount = await prisma.companies.count({
       where: {
-        deleted_at: null, 
+        deleted_at: null,
       },
     });
 
@@ -174,5 +147,40 @@ export const deleteCompany = async (req, res) => {
       return res.status(404).json({ message: "Company not found" });
     }
     res.status(500).json({ message: "Failed to delete company" });
+  }
+};
+
+// controllers/companyController.js
+export const setupCompany = async (req, res) => {
+  try {
+    const { organization_name, organization_type, operation_structure } =
+      req.body;
+    const companyId = req.user.company_id;
+
+    if (!companyId) return res.status(401).json({ error: "Unauthorized" });
+    if (!organization_name || !organization_type || !operation_structure) {
+      return res.status(400).json({ error: "All fields are required" });
+    }
+
+    const updatedCompany = await prisma.companies.update({
+      where: { id: BigInt(companyId) },
+      data: {
+        name: organization_name,
+        onboarding_metadata: {
+          organization_type,
+          operation_structure,
+        },
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Company profile updated successfully",
+      data: serializeBigInt(updatedCompany),
+    });
+  } catch (error) {
+    console.log("Error in setupCompany:", error);
+    console.error("Company Setup Error:", error);
+    res.status(500).json({ error: "Failed to save company profile" });
   }
 };

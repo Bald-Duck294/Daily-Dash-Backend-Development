@@ -1,7 +1,7 @@
 import express from "express";
 // import * as companyController from "../controllers/companyController.js";
 import * as companyController from "../controller/companyController.js";
-
+import { verifyToken } from "../middlewares/authMiddleware.js";
 const companyRouter = express.Router();
 
 // Route to get all companies and create a new company
@@ -18,6 +18,8 @@ companyRouter.get("/count", companyController.getCompaniesCount);
 // GET /api/companies/:id
 // POST /api/companies/:id (for update)
 // DELETE /api/companies/:id
+
+companyRouter.post("/setup", verifyToken, companyController.setupCompany);
 companyRouter
   .route("/:id")
   .get(companyController.getCompanyById)

@@ -12,8 +12,7 @@ import RBACFilterService from "../utils/rbacFilterService.js";
 // const BASE_URL = process.env.BASE_URL || "https://safai-index-backend.onrender.com";
 
 export async function getCleanerReview(req, res) {
-
-  const user = req.user
+  const user = req.user;
 
   // console.log(req.query, "query form the get cleaner user")
   // if (!user) {
@@ -66,29 +65,26 @@ export async function getCleanerReview(req, res) {
         cleaner_user: {
           include: {
             role: true, // Include all role fields
-          }
+          },
         },
         location: {
           include: {
             location_types: true,
-            locations: true
-          }
+            locations: true,
+          },
         },
-        company: true  // Include all company fields
+        company: true, // Include all company fields
       },
       orderBy: {
-        created_at: 'desc'  // 'desc' for newest first, 'asc' for oldest first
-      }
+        created_at: "desc", // 'desc' for newest first, 'asc' for oldest first
+      },
     });
-
-
-
 
     const safeSerialize = (obj) => {
       if (obj === null || obj === undefined) return obj;
 
       // ✅ Handle BigInt
-      if (typeof obj === 'bigint') return obj.toString();
+      if (typeof obj === "bigint") return obj.toString();
 
       // ✅ Handle Date objects BEFORE generic object handling
       if (obj instanceof Date) return obj.toISOString();
@@ -97,7 +93,7 @@ export async function getCleanerReview(req, res) {
       if (Array.isArray(obj)) return obj.map(safeSerialize);
 
       // ✅ Handle generic objects (but after Date check)
-      if (typeof obj === 'object') {
+      if (typeof obj === "object") {
         const serialized = {};
         for (const [key, value] of Object.entries(obj)) {
           serialized[key] = safeSerialize(value);
@@ -109,9 +105,8 @@ export async function getCleanerReview(req, res) {
       return obj;
     };
 
-
     //  Serialize all review data
-    const serializedReviews = reviews.map(review => safeSerialize(review));
+    const serializedReviews = reviews.map((review) => safeSerialize(review));
     // console.log('befor serilize', serializedReviews);
     // const serialized = reviews.map((r) => {
     //   const safeReview = {};
@@ -134,15 +129,15 @@ export async function getCleanerReview(req, res) {
 }
 
 export async function getCleanerReviews(req, res) {
-  const { 
-    cleaner_user_id, 
-    cleaner_id, 
-    status, 
-    start_date, 
-    end_date, 
+  const {
+    cleaner_user_id,
+    cleaner_id,
+    status,
+    start_date,
+    end_date,
     company_id,
-    page = 1,      // Default page 1
-    limit = 15     // Default limit 15
+    page = 1, // Default page 1
+    limit = 15, // Default limit 15
   } = req.query;
 
   try {
@@ -189,26 +184,26 @@ export async function getCleanerReviews(req, res) {
           status: true,
           created_at: true,
           before_photo: true, // <-- Fetched for evidence logs
-          after_photo: true,  // <-- ADDED: Fetched for evidence logs
+          after_photo: true, // <-- ADDED: Fetched for evidence logs
           cleaner_user: {
-            select: {id:true, name: true }
+            select: { id: true, name: true },
           },
           location: {
-            select: { name: true }
-          }
+            select: { name: true },
+          },
         },
         orderBy: {
-          created_at: 'desc'
-        }
-      })
+          created_at: "desc",
+        },
+      }),
     ]);
 
     const safeSerialize = (obj) => {
       if (obj === null || obj === undefined) return obj;
-      if (typeof obj === 'bigint') return obj.toString();
+      if (typeof obj === "bigint") return obj.toString();
       if (obj instanceof Date) return obj.toISOString();
       if (Array.isArray(obj)) return obj.map(safeSerialize);
-      if (typeof obj === 'object') {
+      if (typeof obj === "object") {
         const serialized = {};
         for (const [key, value] of Object.entries(obj)) {
           serialized[key] = safeSerialize(value);
@@ -218,7 +213,7 @@ export async function getCleanerReviews(req, res) {
       return obj;
     };
 
-    const serializedReviews = reviews.map(review => safeSerialize(review));
+    const serializedReviews = reviews.map((review) => safeSerialize(review));
     const totalPages = Math.ceil(totalItems / take);
 
     // Return an object containing both the data and pagination metadata
@@ -230,10 +225,9 @@ export async function getCleanerReviews(req, res) {
         current_page: parseInt(page),
         items_per_page: take,
         has_next_page: parseInt(page) < totalPages,
-        has_prev_page: parseInt(page) > 1
-      }
+        has_prev_page: parseInt(page) > 1,
+      },
     });
-
   } catch (err) {
     console.error("Fetch Cleaner Reviews Error:", err);
     res.status(500).json({ error: "Failed to fetch cleaner reviews" });
@@ -251,7 +245,7 @@ export const getCleanerReviewsById = async (req, res) => {
     if (!cleaner_user_id || isNaN(cleaner_user_id)) {
       return res.status(400).json({
         status: "error",
-        message: "Invalid cleaner user ID provided"
+        message: "Invalid cleaner user ID provided",
       });
     }
 
@@ -274,10 +268,10 @@ export const getCleanerReviewsById = async (req, res) => {
               select: {
                 id: true,
                 name: true,
-                description: true
-              }
-            }
-          }
+                description: true,
+              },
+            },
+          },
         },
         // ✅ Include location details
         location: {
@@ -290,28 +284,29 @@ export const getCleanerReviewsById = async (req, res) => {
             location_types: {
               select: {
                 id: true,
-                name: true
-              }
+                name: true,
+              },
             },
-            locations: { // parent location
+            locations: {
+              // parent location
               select: {
                 id: true,
-                name: true
-              }
-            }
-          }
+                name: true,
+              },
+            },
+          },
         },
         // ✅ Include company details
         company: {
           select: {
             id: true,
             name: true,
-            description: true
-          }
-        }
+            description: true,
+          },
+        },
       },
       orderBy: {
-        created_at: 'desc',
+        created_at: "desc",
       },
     });
 
@@ -321,7 +316,7 @@ export const getCleanerReviewsById = async (req, res) => {
         message: "No reviews found for this cleaner",
         data: {
           reviews: [],
-          stats: stats  // important
+          stats: stats, // important
         },
       });
     }
@@ -331,7 +326,7 @@ export const getCleanerReviewsById = async (req, res) => {
       if (obj === null || obj === undefined) return obj;
 
       // ✅ Handle BigInt
-      if (typeof obj === 'bigint') return obj.toString();
+      if (typeof obj === "bigint") return obj.toString();
 
       // ✅ Handle Date objects BEFORE generic object handling
       if (obj instanceof Date) return obj.toISOString();
@@ -340,7 +335,7 @@ export const getCleanerReviewsById = async (req, res) => {
       if (Array.isArray(obj)) return obj.map(safeSerialize);
 
       // ✅ Handle generic objects (but after Date check)
-      if (typeof obj === 'object') {
+      if (typeof obj === "object") {
         const serialized = {};
         for (const [key, value] of Object.entries(obj)) {
           serialized[key] = safeSerialize(value);
@@ -352,16 +347,18 @@ export const getCleanerReviewsById = async (req, res) => {
       return obj;
     };
 
-
     // ✅ Serialize all review data
-    const serializedReviews = reviews.map(review => safeSerialize(review));
+    const serializedReviews = reviews.map((review) => safeSerialize(review));
 
     // ✅ Calculate stats from the reviews
     stats = {
       total_reviews: serializedReviews.length,
-      completed_reviews: serializedReviews.filter(r => r.status === 'completed').length,
-      ongoing_reviews: serializedReviews.filter(r => r.status === 'ongoing').length,
-      total_tasks_today: serializedReviews.filter(r => {
+      completed_reviews: serializedReviews.filter(
+        (r) => r.status === "completed",
+      ).length,
+      ongoing_reviews: serializedReviews.filter((r) => r.status === "ongoing")
+        .length,
+      total_tasks_today: serializedReviews.filter((r) => {
         try {
           const today = new Date();
           const reviewDate = new Date(r.created_at);
@@ -380,17 +377,19 @@ export const getCleanerReviewsById = async (req, res) => {
       status: "success",
       data: {
         reviews: serializedReviews,
-        stats: stats  // important
+        stats: stats, // important
       },
-      message: "Cleaner reviews retrieved successfully!"
+      message: "Cleaner reviews retrieved successfully!",
     });
-
   } catch (err) {
     console.error("Fetch Reviews by Cleaner ID Error:", err);
     res.status(500).json({
       status: "error",
       message: "Failed to fetch cleaner reviews by cleaner ID",
-      detail: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+      detail:
+        process.env.NODE_ENV === "development"
+          ? err.message
+          : "Internal server error",
     });
   }
 };
@@ -410,10 +409,10 @@ export const getCleanerReviewsByLocationId = async (req, res) => {
     if (!location_id || isNaN(location_id)) {
       return res.status(400).json({
         status: "error",
-        message: "Invalid location ID provided"
+        message: "Invalid location ID provided",
       });
     }
-    const limit = take ? Math.min(parseInt(take), 100) : 10;  // Default 10, max 100
+    const limit = take ? Math.min(parseInt(take), 100) : 10; // Default 10, max 100
     const offset = skip ? parseInt(skip) : 0;
 
     // Build where clause
@@ -429,7 +428,7 @@ export const getCleanerReviewsByLocationId = async (req, res) => {
     // Fetch reviews with all related data
     const reviews = await prisma.cleaner_review.findMany({
       where: whereClause,
-      take: limit,      // ✅ Limit results
+      take: limit, // ✅ Limit results
       skip: offset,
       include: {
         // Include cleaner user details
@@ -445,10 +444,10 @@ export const getCleanerReviewsByLocationId = async (req, res) => {
               select: {
                 id: true,
                 name: true,
-                description: true
-              }
-            }
-          }
+                description: true,
+              },
+            },
+          },
         },
         // Include location details
         location: {
@@ -461,28 +460,29 @@ export const getCleanerReviewsByLocationId = async (req, res) => {
             location_types: {
               select: {
                 id: true,
-                name: true
-              }
+                name: true,
+              },
             },
-            locations: { // parent location
+            locations: {
+              // parent location
               select: {
                 id: true,
-                name: true
-              }
-            }
-          }
+                name: true,
+              },
+            },
+          },
         },
         // Include company details
         company: {
           select: {
             id: true,
             name: true,
-            description: true
-          }
-        }
+            description: true,
+          },
+        },
       },
       orderBy: {
-        created_at: 'desc',
+        created_at: "desc",
       },
     });
 
@@ -496,8 +496,8 @@ export const getCleanerReviewsByLocationId = async (req, res) => {
             total_reviews: 0,
             completed_reviews: 0,
             ongoing_reviews: 0,
-            average_score: null
-          }
+            average_score: null,
+          },
         },
       });
     }
@@ -505,10 +505,10 @@ export const getCleanerReviewsByLocationId = async (req, res) => {
     // Serialization function for BigInt and Date
     const safeSerialize = (obj) => {
       if (obj === null || obj === undefined) return obj;
-      if (typeof obj === 'bigint') return obj.toString();
+      if (typeof obj === "bigint") return obj.toString();
       if (obj instanceof Date) return obj.toISOString();
       if (Array.isArray(obj)) return obj.map(safeSerialize);
-      if (typeof obj === 'object') {
+      if (typeof obj === "object") {
         const serialized = {};
         for (const [key, value] of Object.entries(obj)) {
           serialized[key] = safeSerialize(value);
@@ -519,17 +519,26 @@ export const getCleanerReviewsByLocationId = async (req, res) => {
     };
 
     // Serialize all review data
-    const serializedReviews = reviews.map(review => safeSerialize(review));
+    const serializedReviews = reviews.map((review) => safeSerialize(review));
 
     // Calculate stats
     const stats = {
       total_reviews: serializedReviews.length,
-      completed_reviews: serializedReviews.filter(r => r.status === 'completed').length,
-      ongoing_reviews: serializedReviews.filter(r => r.status === 'ongoing').length,
-      average_score: serializedReviews.length > 0
-        ? (serializedReviews.reduce((sum, r) => sum + (parseFloat(r.score) || 0), 0) / serializedReviews.length).toFixed(2)
-        : null,
-      latest_review: serializedReviews[0] || null
+      completed_reviews: serializedReviews.filter(
+        (r) => r.status === "completed",
+      ).length,
+      ongoing_reviews: serializedReviews.filter((r) => r.status === "ongoing")
+        .length,
+      average_score:
+        serializedReviews.length > 0
+          ? (
+              serializedReviews.reduce(
+                (sum, r) => sum + (parseFloat(r.score) || 0),
+                0,
+              ) / serializedReviews.length
+            ).toFixed(2)
+          : null,
+      latest_review: serializedReviews[0] || null,
     };
 
     // console.log(`Successfully fetched ${serializedReviews.length} reviews for location ${location_id}`);
@@ -538,21 +547,22 @@ export const getCleanerReviewsByLocationId = async (req, res) => {
       status: "success",
       data: {
         reviews: serializedReviews,
-        stats: stats
+        stats: stats,
       },
-      message: "Cleaner reviews retrieved successfully!"
+      message: "Cleaner reviews retrieved successfully!",
     });
-
   } catch (err) {
     console.error("Fetch Reviews by Location ID Error:", err);
     res.status(500).json({
       status: "error",
       message: "Failed to fetch cleaner reviews by location ID",
-      detail: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+      detail:
+        process.env.NODE_ENV === "development"
+          ? err.message
+          : "Internal server error",
     });
   }
 };
-
 
 export const getCleanerReviewsByTaskId = async (req, res) => {
   // console.log('Getting cleaner reviews by task id');
@@ -565,7 +575,7 @@ export const getCleanerReviewsByTaskId = async (req, res) => {
     if (!task_id || isNaN(task_id)) {
       return res.status(400).json({
         status: "error",
-        message: "Invalid cleaner user ID provided"
+        message: "Invalid cleaner user ID provided",
       });
     }
 
@@ -588,10 +598,10 @@ export const getCleanerReviewsByTaskId = async (req, res) => {
               select: {
                 id: true,
                 name: true,
-                description: true
-              }
-            }
-          }
+                description: true,
+              },
+            },
+          },
         },
         // ✅ Include location details
         location: {
@@ -604,28 +614,29 @@ export const getCleanerReviewsByTaskId = async (req, res) => {
             location_types: {
               select: {
                 id: true,
-                name: true
-              }
+                name: true,
+              },
             },
-            locations: { // parent location
+            locations: {
+              // parent location
               select: {
                 id: true,
-                name: true
-              }
-            }
-          }
+                name: true,
+              },
+            },
+          },
         },
         // ✅ Include company details
         company: {
           select: {
             id: true,
             name: true,
-            description: true
-          }
-        }
+            description: true,
+          },
+        },
       },
       orderBy: {
-        created_at: 'desc',
+        created_at: "desc",
       },
     });
 
@@ -635,7 +646,7 @@ export const getCleanerReviewsByTaskId = async (req, res) => {
         message: "No reviews found for this cleaner",
         data: {
           reviews: [],
-          stats: stats  // important
+          stats: stats, // important
         },
       });
     }
@@ -647,7 +658,7 @@ export const getCleanerReviewsByTaskId = async (req, res) => {
       if (obj === null || obj === undefined) return obj;
 
       // ✅ Handle BigInt
-      if (typeof obj === 'bigint') return obj.toString();
+      if (typeof obj === "bigint") return obj.toString();
 
       // ✅ Handle Date objects BEFORE generic object handling
       if (obj instanceof Date) return obj.toISOString();
@@ -656,7 +667,7 @@ export const getCleanerReviewsByTaskId = async (req, res) => {
       if (Array.isArray(obj)) return obj.map(safeSerialize);
 
       // ✅ Handle generic objects (but after Date check)
-      if (typeof obj === 'object') {
+      if (typeof obj === "object") {
         const serialized = {};
         for (const [key, value] of Object.entries(obj)) {
           serialized[key] = safeSerialize(value);
@@ -668,17 +679,19 @@ export const getCleanerReviewsByTaskId = async (req, res) => {
       return obj;
     };
 
-
     // ✅ Serialize all review data
-    const serializedReviews = reviews.map(review => safeSerialize(review));
+    const serializedReviews = reviews.map((review) => safeSerialize(review));
 
     // console.log(serializedReviews, "serilized regviews")
     // ✅ Calculate stats from the reviews
     stats = {
       total_reviews: serializedReviews.length,
-      completed_reviews: serializedReviews.filter(r => r.status === 'completed').length,
-      ongoing_reviews: serializedReviews.filter(r => r.status === 'ongoing').length,
-      total_tasks_today: serializedReviews.filter(r => {
+      completed_reviews: serializedReviews.filter(
+        (r) => r.status === "completed",
+      ).length,
+      ongoing_reviews: serializedReviews.filter((r) => r.status === "ongoing")
+        .length,
+      total_tasks_today: serializedReviews.filter((r) => {
         try {
           const today = new Date();
           const reviewDate = new Date(r.created_at);
@@ -697,21 +710,22 @@ export const getCleanerReviewsByTaskId = async (req, res) => {
       status: "success",
       data: {
         reviews: serializedReviews,
-        stats: stats  // important
+        stats: stats, // important
       },
-      message: "Cleaner reviews retrieved successfully!"
+      message: "Cleaner reviews retrieved successfully!",
     });
-
   } catch (err) {
     console.error("Fetch Reviews by Cleaner ID Error:", err);
     res.status(500).json({
       status: "error",
       message: "Failed to fetch cleaner reviews by cleaner ID",
-      detail: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+      detail:
+        process.env.NODE_ENV === "development"
+          ? err.message
+          : "Internal server error",
     });
   }
 };
-
 
 export async function createCleanerReview(req, res) {
   try {
@@ -724,7 +738,7 @@ export async function createCleanerReview(req, res) {
       cleaner_user_id,
       tasks,
       initial_comment,
-      company_id
+      company_id,
     } = req.body;
 
     // Get uploaded URLs from middleware
@@ -735,7 +749,7 @@ export async function createCleanerReview(req, res) {
     if (tasks) {
       if (Array.isArray(tasks)) {
         parsedTasks = tasks.map(String);
-      } else if (typeof tasks === 'string') {
+      } else if (typeof tasks === "string") {
         try {
           const parsed = JSON.parse(tasks);
           if (Array.isArray(parsed)) {
@@ -744,7 +758,7 @@ export async function createCleanerReview(req, res) {
             parsedTasks = [String(parsed)];
           }
         } catch (e) {
-          parsedTasks = tasks.split(',').map(task => String(task).trim());
+          parsedTasks = tasks.split(",").map((task) => String(task).trim());
         }
       }
     }
@@ -770,29 +784,25 @@ export async function createCleanerReview(req, res) {
         initial_comment: initial_comment || null,
         before_photo: beforePhotos,
         after_photo: [],
-        status: 'ongoing',
-        company_id: company_id ? BigInt(company_id) : null
+        status: "ongoing",
+        company_id: company_id ? BigInt(company_id) : null,
       },
     });
-
 
     const serializedData = {
       ...review,
       id: review?.id.toString(),
       location_id: review?.location_id?.toString(),
       cleaner_user_id: review?.cleaner_user_id?.toString(),
-      company_id: review?.company_id?.toString()
+      company_id: review?.company_id?.toString(),
     };
 
-    res.status(201).json({ status: 'success', data: serializedData });
+    res.status(201).json({ status: "success", data: serializedData });
   } catch (err) {
-    console.error('Create Review Error:', err);
-    res.status(400).json({ status: 'error', detail: err.message });
+    console.error("Create Review Error:", err);
+    res.status(400).json({ status: "error", detail: err.message });
   }
 }
-
-
-
 
 export async function completeCleanerReview(req, res) {
   try {
@@ -808,7 +818,7 @@ export async function completeCleanerReview(req, res) {
         after_photo: afterPhotos,
         final_comment: final_comment || null,
         status: "completed",
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
       },
     });
 
@@ -828,13 +838,11 @@ export async function completeCleanerReview(req, res) {
 
     // ✅ AI scoring with comprehensive error handling
     processHygieneScoring(review, afterPhotos);
-
   } catch (err) {
     console.error("Error completing review:", err.message);
     res.status(400).json({ status: "error", detail: err.message });
   }
 }
-
 
 // At the top of your file
 // const FormData = require('form-data'); // Must import this for Node.js
@@ -862,33 +870,32 @@ async function processHygieneScoring(review, afterPhotos) {
     return Number(average.toFixed(2)); // Round to 2 decimal places
   };
 
-
   // ✅ Helper: Validate AI response structure
   const validateAIResponse = (data) => {
     // console.log('🔍 Validating AI response...');
 
     if (!Array.isArray(data)) {
-      throw new Error('Response is not an array');
+      throw new Error("Response is not an array");
     }
 
     if (data.length === 0) {
-      throw new Error('Response array is empty');
+      throw new Error("Response array is empty");
     }
 
     const invalidItems = [];
     data.forEach((item, index) => {
-      if (!item.filename || typeof item.score !== 'number' || !item.status) {
+      if (!item.filename || typeof item.score !== "number" || !item.status) {
         invalidItems.push(index);
       }
     });
 
     if (invalidItems.length > 0) {
-      throw new Error(`Invalid items at indices: ${invalidItems.join(', ')}`);
+      throw new Error(`Invalid items at indices: ${invalidItems.join(", ")}`);
     }
 
     // console.log('✅ Response validation passed');
     // console.log(`📊 Received ${data.length} scores`);
-    data.forEach(item => {
+    data.forEach((item) => {
       // console.log(`   - ${item.filename}: ${item.score}/10 (status: ${item.status})`);
     });
 
@@ -907,15 +914,15 @@ async function processHygieneScoring(review, afterPhotos) {
         generated_at: new Date().toISOString(),
       },
       filename: `after_photo_${index + 1}`,
-      status: 'success',
-      image_url: url
+      status: "success",
+      image_url: url,
     }));
   };
 
   // ✅ Helper: Save scores to database
   const saveScoresToDatabase = async (scores, reviewData) => {
-    console.log('\n💾 SAVING SCORES TO DATABASE');
-    console.log('========================================');
+    console.log("\n💾 SAVING SCORES TO DATABASE");
+    console.log("========================================");
 
     const savedScores = [];
 
@@ -923,7 +930,9 @@ async function processHygieneScoring(review, afterPhotos) {
       const scoreItem = scores[i];
 
       try {
-        const normalizedScore = convertScoreTo10Scale(Number(scoreItem.score) || 7);
+        const normalizedScore = convertScoreTo10Scale(
+          Number(scoreItem.score) || 7,
+        );
 
         console.log(`\n📊 Score ${i + 1}/${scores.length}:`);
         console.log(`   Filename: ${scoreItem.filename}`);
@@ -944,8 +953,6 @@ async function processHygieneScoring(review, afterPhotos) {
 
         savedScores.push(savedScore);
         console.log(`   ✅ Saved to DB with ID: ${savedScore.id}`);
-
-
       } catch (dbError) {
         console.error(`   ❌ DB Error for score ${i + 1}:`, {
           message: dbError.message,
@@ -954,45 +961,46 @@ async function processHygieneScoring(review, afterPhotos) {
       }
     }
 
-    console.log('\n========================================');
-    console.log(`✅ Saved ${savedScores.length}/${scores.length} scores successfully`);
-    console.log('========================================\n');
-
+    console.log("\n========================================");
+    console.log(
+      `✅ Saved ${savedScores.length}/${scores.length} scores successfully`,
+    );
+    console.log("========================================\n");
 
     // Step 2: Calculate average score from ALL scores
     const averageScore = calculateAverageScore(scores);
     console.log(`📊 Calculated Average Score: ${averageScore}/10`);
-    console.log(`   Individual scores: [${scores.map(s => s.score).join(', ')}]`);
-    console.log('========================================\n');
+    console.log(
+      `   Individual scores: [${scores.map((s) => s.score).join(", ")}]`,
+    );
+    console.log("========================================\n");
 
     // Step 3: Update cleaner_review ONCE with the average score
     try {
       const updatedReview = await prisma.cleaner_review.update({
         where: { id: reviewData.id },
         data: {
-          score: averageScore,  // ✅ Average of all scores
-          updated_at: new Date()
-        }
+          score: averageScore, // ✅ Average of all scores
+          updated_at: new Date(),
+        },
       });
 
-      console.log('✅ CLEANER REVIEW UPDATED');
-      console.log('========================================');
+      console.log("✅ CLEANER REVIEW UPDATED");
+      console.log("========================================");
       console.log(`   Review ID: ${reviewData.id}`);
       console.log(`   Final Average Score: ${averageScore}/10`);
       console.log(`   Updated At: ${updatedReview.updated_at}`);
-      console.log('========================================\n');
-    }
-    catch (updateError) {
-      console.log('\n❌ FAILED TO UPDATE CLEANER REVIEW');
-      console.log('========================================');
-      console.error('   Error:', {
+      console.log("========================================\n");
+    } catch (updateError) {
+      console.log("\n❌ FAILED TO UPDATE CLEANER REVIEW");
+      console.log("========================================");
+      console.error("   Error:", {
         message: updateError.message,
         code: updateError.code,
-        review_id: reviewData.id
+        review_id: reviewData.id,
       });
-      console.log('========================================\n');
+      console.log("========================================\n");
     }
-
 
     return savedScores;
   };
@@ -1000,7 +1008,7 @@ async function processHygieneScoring(review, afterPhotos) {
   // ===== MAIN PROCESS =====
   try {
     if (afterPhotos.length === 0) {
-      console.log('⚠️  No after photos to process. Exiting...\n');
+      console.log("⚠️  No after photos to process. Exiting...\n");
       return;
     }
 
@@ -1008,11 +1016,11 @@ async function processHygieneScoring(review, afterPhotos) {
 
     // ===== METHOD 1: TRY URL-BASED SCORING =====
     try {
-      console.log('\n🔄 METHOD 1: Sending Cloudinary URLs to AI');
-      console.log('========================================');
+      console.log("\n🔄 METHOD 1: Sending Cloudinary URLs to AI");
+      console.log("========================================");
 
       const urlPayload = { images: afterPhotos };
-      console.log('📤 Payload:', JSON.stringify(urlPayload, null, 2));
+      console.log("📤 Payload:", JSON.stringify(urlPayload, null, 2));
 
       const startTime = Date.now();
 
@@ -1021,49 +1029,51 @@ async function processHygieneScoring(review, afterPhotos) {
         urlPayload,
         {
           headers: {
-            'Content-Type': 'application/json',
-            'User-Agent': 'CleanerReview/1.0',
+            "Content-Type": "application/json",
+            "User-Agent": "CleanerReview/1.0",
           },
-          timeout: 15000
-        }
+          timeout: 15000,
+        },
       );
 
       const duration = Date.now() - startTime;
       console.log(`⏱️  Response received in ${duration}ms`);
-      console.log('📥 Response status:', aiResponse.status);
-      console.log('📥 Response data:', JSON.stringify(aiResponse.data, null, 2));
+      console.log("📥 Response status:", aiResponse.status);
+      console.log(
+        "📥 Response data:",
+        JSON.stringify(aiResponse.data, null, 2),
+      );
 
       // Validate response
       validateAIResponse(aiResponse.data);
 
       scoreData = aiResponse.data;
-      console.log('\n✅ METHOD 1 SUCCESSFUL - URL-based scoring');
-      console.log('========================================\n');
-
+      console.log("\n✅ METHOD 1 SUCCESSFUL - URL-based scoring");
+      console.log("========================================\n");
     } catch (urlError) {
-      console.log('\n❌ METHOD 1 FAILED');
-      console.log('========================================');
+      console.log("\n❌ METHOD 1 FAILED");
+      console.log("========================================");
 
-      if (urlError.code === 'ECONNABORTED') {
-        console.log('⏰ Error Type: Timeout (15 seconds exceeded)');
+      if (urlError.code === "ECONNABORTED") {
+        console.log("⏰ Error Type: Timeout (15 seconds exceeded)");
       } else if (urlError.response) {
-        console.log('🔴 Error Type: Server responded with error');
-        console.log('   Status:', urlError.response.status);
-        console.log('   Status Text:', urlError.response.statusText);
-        console.log('   Response Data:', urlError.response.data);
+        console.log("🔴 Error Type: Server responded with error");
+        console.log("   Status:", urlError.response.status);
+        console.log("   Status Text:", urlError.response.statusText);
+        console.log("   Response Data:", urlError.response.data);
       } else if (urlError.request) {
-        console.log('🔴 Error Type: No response from server');
-        console.log('   Message:', urlError.message);
+        console.log("🔴 Error Type: No response from server");
+        console.log("   Message:", urlError.message);
       } else {
-        console.log('🔴 Error Type: Request setup failed');
-        console.log('   Message:', urlError.message);
+        console.log("🔴 Error Type: Request setup failed");
+        console.log("   Message:", urlError.message);
       }
-      console.log('========================================\n');
+      console.log("========================================\n");
 
       // ===== METHOD 2: TRY FORMDATA-BASED SCORING =====
       try {
-        console.log('🔄 METHOD 2: Downloading images and sending as FormData');
-        console.log('========================================');
+        console.log("🔄 METHOD 2: Downloading images and sending as FormData");
+        console.log("========================================");
 
         const formData = new FormData();
         let successCount = 0;
@@ -1083,46 +1093,49 @@ async function processHygieneScoring(review, afterPhotos) {
             // Download image as buffer
             const response = await axios({
               url: imageUrl,
-              method: 'GET',
-              responseType: 'arraybuffer', // Important: use arraybuffer, not stream
+              method: "GET",
+              responseType: "arraybuffer", // Important: use arraybuffer, not stream
               timeout: 10000,
               headers: {
-                'User-Agent': 'CleanerReview-ImageDownloader/1.0'
-              }
+                "User-Agent": "CleanerReview-ImageDownloader/1.0",
+              },
             });
 
             const downloadDuration = Date.now() - downloadStart;
             const sizeKB = (response.data.length / 1024).toFixed(2);
 
-            console.log(`   ✅ Downloaded in ${downloadDuration}ms (${sizeKB} KB)`);
-            console.log(`   Content-Type: ${response.headers['content-type']}`);
+            console.log(
+              `   ✅ Downloaded in ${downloadDuration}ms (${sizeKB} KB)`,
+            );
+            console.log(`   Content-Type: ${response.headers["content-type"]}`);
 
             // Append buffer to FormData with proper filename
             const filename = `image_${i + 1}.jpg`;
-            formData.append('images', Buffer.from(response.data), filename);
+            formData.append("images", Buffer.from(response.data), filename);
 
             console.log(`   ✅ Added to FormData as "${filename}"`);
             successCount++;
-
           } catch (downloadError) {
             failCount++;
             console.log(`   ❌ Download failed:`, {
               message: downloadError.message,
               code: downloadError.code,
-              status: downloadError.response?.status
+              status: downloadError.response?.status,
             });
           }
         }
 
-        console.log('\n========================================');
-        console.log(`📊 Download Summary: ${successCount} success, ${failCount} failed`);
-        console.log('========================================\n');
+        console.log("\n========================================");
+        console.log(
+          `📊 Download Summary: ${successCount} success, ${failCount} failed`,
+        );
+        console.log("========================================\n");
 
         if (successCount === 0) {
-          throw new Error('Failed to download any images');
+          throw new Error("Failed to download any images");
         }
 
-        console.log('📤 Sending FormData to AI service...');
+        console.log("📤 Sending FormData to AI service...");
         const uploadStart = Date.now();
 
         const aiResponse = await axios.post(
@@ -1131,44 +1144,49 @@ async function processHygieneScoring(review, afterPhotos) {
           {
             headers: {
               ...formData.getHeaders(), // Critical: get headers with boundary
-              'User-Agent': 'CleanerReview-AIService/1.0'
+              "User-Agent": "CleanerReview-AIService/1.0",
             },
             timeout: 30000,
             maxContentLength: Infinity,
-            maxBodyLength: Infinity
-          }
+            maxBodyLength: Infinity,
+          },
         );
 
         const uploadDuration = Date.now() - uploadStart;
         console.log(`⏱️  Response received in ${uploadDuration}ms`);
-        console.log('📥 Response status:', aiResponse.status);
-        console.log('📥 Response data:', JSON.stringify(aiResponse.data, null, 2));
+        console.log("📥 Response status:", aiResponse.status);
+        console.log(
+          "📥 Response data:",
+          JSON.stringify(aiResponse.data, null, 2),
+        );
 
         // Validate response
         validateAIResponse(aiResponse.data);
 
         scoreData = aiResponse.data;
-        console.log('\n✅ METHOD 2 SUCCESSFUL - FormData upload');
-        console.log('========================================\n');
-
+        console.log("\n✅ METHOD 2 SUCCESSFUL - FormData upload");
+        console.log("========================================\n");
       } catch (formDataError) {
-        console.log('\n❌ METHOD 2 FAILED');
-        console.log('========================================');
+        console.log("\n❌ METHOD 2 FAILED");
+        console.log("========================================");
 
-        if (formDataError.code === 'ECONNABORTED') {
-          console.log('⏰ Error Type: Timeout (30 seconds exceeded)');
+        if (formDataError.code === "ECONNABORTED") {
+          console.log("⏰ Error Type: Timeout (30 seconds exceeded)");
         } else if (formDataError.response) {
-          console.log('🔴 Error Type: Server error');
-          console.log('   Status:', formDataError.response.status);
-          console.log('   Status Text:', formDataError.response.statusText);
-          console.log('   Response Data:', JSON.stringify(formDataError.response.data, null, 2));
+          console.log("🔴 Error Type: Server error");
+          console.log("   Status:", formDataError.response.status);
+          console.log("   Status Text:", formDataError.response.statusText);
+          console.log(
+            "   Response Data:",
+            JSON.stringify(formDataError.response.data, null, 2),
+          );
         } else if (formDataError.request) {
-          console.log('🔴 Error Type: No response received');
-          console.log('   Message:', formDataError.message);
+          console.log("🔴 Error Type: No response received");
+          console.log("   Message:", formDataError.message);
         } else {
-          console.log('🔴 Error Type: Request setup failed');
-          console.log('   Message:', formDataError.message);
-          console.log('   Stack:', formDataError.stack);
+          console.log("🔴 Error Type: Request setup failed");
+          console.log("   Message:", formDataError.message);
+          console.log("   Stack:", formDataError.stack);
         }
         // console.log('========================================\n');
 
@@ -1183,7 +1201,6 @@ async function processHygieneScoring(review, afterPhotos) {
       // console.log('\n✅ HYGIENE SCORING COMPLETED SUCCESSFULLY');
       // console.log('========================================\n');
     }
-
   } catch (finalError) {
     // ===== FALLBACK: GENERATE FAKE SCORES =====
     // console.log('\n🔴 ALL METHODS FAILED - Using Fallback');
@@ -1203,156 +1220,18 @@ async function processHygieneScoring(review, afterPhotos) {
 
       // console.log('\n✅ FALLBACK COMPLETED - Fake scores saved');
       // console.log('========================================\n');
-
     } catch (fakeError) {
       // console.log('\n🔴 CRITICAL: FALLBACK FAILED');
       // console.log('========================================');
-      console.error('Unable to save even fake scores:', {
+      console.error("Unable to save even fake scores:", {
         message: fakeError.message,
         stack: fakeError.stack,
-        code: fakeError.code
+        code: fakeError.code,
       });
       // console.log('========================================\n');
     }
   }
 }
-
-
-
-// export async function updateCleanerReviewScore(req, res) {
-//   const { id } = req.params;
-//   const { score } = req.body;
-//   const user = req.user;
-//   const company_id = 24;
-//   if (!user) {
-//     return res.status(401).json({ message: "Unauthorized" });
-//   }
-
-//   // ✅ Check if user is SUPERADMIN (role_id = 1)
-//   if (user.role_id !== 1) {
-//     return res.status(403).json({
-//       message: "Forbidden - Superadmin access required"
-//     });
-//   }
-
-//   // Validate score
-//   if (score === undefined || score === null) {
-//     return res.status(400).json({ message: "Score is required" });
-//   }
-
-//   if (score < 0 || score > 10) {
-//     return res.status(400).json({ message: "Score must be between 0 and 10" });
-//   }
-
-//   try {
-//     // Get current review
-//     const existingReview = await prisma.cleaner_review.findUnique({
-//       where: { id: BigInt(id) }
-//     });
-
-//     if (!existingReview) {
-//       return res.status(404).json({ message: "Review not found" });
-//     }
-
-//     // Prepare update data
-//     const updateData = {
-//       score: parseFloat(score),
-//       is_modified: true,
-//       updated_at: new Date()
-//     };
-
-//     // ✅ Store original score if not already stored (first time modification)
-//     if (existingReview.original_score === null || existingReview.original_score === undefined) {
-//       updateData.original_score = existingReview.score;
-//     }
-
-//     // Update the review
-//     const updatedReview = await prisma.cleaner_review.update({
-//       where: { id: BigInt(id) },
-//       data: updateData,
-//       include: {
-//         cleaner_user: {
-//           select: {
-//             id: true,
-//             name: true,
-//             phone: true,
-//             email: true
-//           }
-//         },
-//         location: {
-//           select: {
-//             id: true,
-//             name: true,
-//             address: true
-//           }
-//         },
-//         company: {
-//           select: {
-//             id: true,
-//             name: true
-//           }
-//         }
-//       }
-//     });
-
-
-//     const updateHygieneScores = await prisma.hygiene_scores.udate({
-//       where: {
-//         location_id: BigInt(existingReview?.location_id),
-//         data: {
-//           score: parseFloat(score) ,
-//           is_modified : true ,
-
-//         }
-//       }
-//     })
-//     console.log(updatedReview, "updated review after score update");
-
-
-//     const safeSerialize = (obj) => {
-//       if (obj === null || obj === undefined) return obj;
-
-//       // Handle BigInt
-//       if (typeof obj === 'bigint') return obj.toString();
-
-//       // Handle Date objects BEFORE generic object handling
-//       if (obj instanceof Date) return obj.toISOString();
-
-//       // Handle Arrays
-//       if (Array.isArray(obj)) return obj.map(safeSerialize);
-
-//       // Handle generic objects (but after Date check)
-//       if (typeof obj === 'object') {
-//         const serialized = {};
-//         for (const [key, value] of Object.entries(obj)) {
-//           serialized[key] = safeSerialize(value);
-//         }
-//         return serialized;
-//       }
-
-//       // Return primitives as-is
-//       return obj;
-//     };
-
-//     const serializedReview = safeSerialize(updatedReview);
-
-//     return res.status(200).json({
-//       success: true,
-//       message: "Score updated successfully",
-//       data: serializedReview
-//     });
-
-
-//   } catch (error) {
-//     console.error("Error updating score:", error);
-//     return res.status(500).json({
-//       success: false,
-//       message: "Failed to update score",
-//       error: error.message
-//     });
-//   }
-// }
-
 
 export async function updateCleanerReviewScore(req, res) {
   const { id } = req.params;
@@ -1365,7 +1244,7 @@ export async function updateCleanerReviewScore(req, res) {
 
   if (user.role_id !== 1) {
     return res.status(403).json({
-      message: "Forbidden - Superadmin access required"
+      message: "Forbidden - Superadmin access required",
     });
   }
 
@@ -1379,7 +1258,7 @@ export async function updateCleanerReviewScore(req, res) {
 
   try {
     const existingReview = await prisma.cleaner_review.findUnique({
-      where: { id: BigInt(id) }
+      where: { id: BigInt(id) },
     });
 
     if (!existingReview) {
@@ -1392,7 +1271,7 @@ export async function updateCleanerReviewScore(req, res) {
     if (existingReview.hygiene_score_id) {
       console.log("Using hygiene_score_id for lookup");
       existingHygieneScore = await prisma.hygiene_scores.findUnique({
-        where: { id: existingReview.hygiene_score_id }
+        where: { id: existingReview.hygiene_score_id },
       });
     }
     // ✅ Strategy 2: Fallback - Match by score and same-day creation
@@ -1413,8 +1292,12 @@ export async function updateCleanerReviewScore(req, res) {
       // 3. Created on same day
       // 4. Within a few minutes of review creation
       const reviewCreatedAt = new Date(existingReview.created_at);
-      const fiveMinutesBefore = new Date(reviewCreatedAt.getTime() - 5 * 60 * 1000);
-      const fiveMinutesAfter = new Date(reviewCreatedAt.getTime() + 5 * 60 * 1000);
+      const fiveMinutesBefore = new Date(
+        reviewCreatedAt.getTime() - 5 * 60 * 1000,
+      );
+      const fiveMinutesAfter = new Date(
+        reviewCreatedAt.getTime() + 5 * 60 * 1000,
+      );
 
       existingHygieneScore = await prisma.hygiene_scores.findFirst({
         where: {
@@ -1422,12 +1305,12 @@ export async function updateCleanerReviewScore(req, res) {
           score: existingReview.score, // Match exact score
           created_at: {
             gte: fiveMinutesBefore, // Within 5 minutes before
-            lte: fiveMinutesAfter   // Within 5 minutes after
-          }
+            lte: fiveMinutesAfter, // Within 5 minutes after
+          },
         },
         orderBy: {
-          created_at: 'asc' // Get the earliest match
-        }
+          created_at: "asc", // Get the earliest match
+        },
       });
 
       // If no match within 5 minutes, try same day with score match
@@ -1439,29 +1322,32 @@ export async function updateCleanerReviewScore(req, res) {
             score: existingReview.score,
             created_at: {
               gte: startOfDay,
-              lte: endOfDay
-            }
+              lte: endOfDay,
+            },
           },
           orderBy: {
-            created_at: 'asc'
-          }
+            created_at: "asc",
+          },
         });
       }
 
       // ✅ If we found a match, update the review with the hygiene_score_id
       if (existingHygieneScore) {
-        console.log(`Found hygiene score via fallback: ${existingHygieneScore.id}`);
+        console.log(
+          `Found hygiene score via fallback: ${existingHygieneScore.id}`,
+        );
         // Update the review to store the hygiene_score_id for future lookups
         await prisma.cleaner_review.update({
           where: { id: BigInt(id) },
-          data: { hygiene_score_id: existingHygieneScore.id }
+          data: { hygiene_score_id: existingHygieneScore.id },
         });
       }
     }
 
     if (!existingHygieneScore) {
       return res.status(404).json({
-        message: "Related hygiene score not found. Unable to match by score and date."
+        message:
+          "Related hygiene score not found. Unable to match by score and date.",
       });
     }
 
@@ -1469,11 +1355,13 @@ export async function updateCleanerReviewScore(req, res) {
     const reviewUpdateData = {
       score: parseFloat(score),
       is_modified: true,
-      updated_at: existingReview.updated_at
+      updated_at: existingReview.updated_at,
     };
 
-    if (existingReview.original_score === null ||
-      existingReview.original_score === undefined) {
+    if (
+      existingReview.original_score === null ||
+      existingReview.original_score === undefined
+    ) {
       reviewUpdateData.original_score = existingReview.score;
     }
 
@@ -1481,11 +1369,13 @@ export async function updateCleanerReviewScore(req, res) {
     const hygieneUpdateData = {
       score: parseFloat(score),
       is_modified: true,
-      updated_at: existingHygieneScore.updated_at
+      updated_at: existingHygieneScore.updated_at,
     };
 
-    if (existingHygieneScore.original_score === null ||
-      existingHygieneScore.original_score === undefined) {
+    if (
+      existingHygieneScore.original_score === null ||
+      existingHygieneScore.original_score === undefined
+    ) {
       hygieneUpdateData.original_score = existingHygieneScore.score;
     }
 
@@ -1496,20 +1386,20 @@ export async function updateCleanerReviewScore(req, res) {
         data: reviewUpdateData,
         include: {
           cleaner_user: {
-            select: { id: true, name: true, phone: true, email: true }
+            select: { id: true, name: true, phone: true, email: true },
           },
           location: {
-            select: { id: true, name: true, address: true }
+            select: { id: true, name: true, address: true },
           },
           company: {
-            select: { id: true, name: true }
-          }
-        }
+            select: { id: true, name: true },
+          },
+        },
       }),
       prisma.hygiene_scores.update({
         where: { id: existingHygieneScore.id },
-        data: hygieneUpdateData
-      })
+        data: hygieneUpdateData,
+      }),
     ]);
 
     console.log("Updated review:", updatedReview.id);
@@ -1517,10 +1407,10 @@ export async function updateCleanerReviewScore(req, res) {
 
     const safeSerialize = (obj) => {
       if (obj === null || obj === undefined) return obj;
-      if (typeof obj === 'bigint') return obj.toString();
+      if (typeof obj === "bigint") return obj.toString();
       if (obj instanceof Date) return obj.toISOString();
       if (Array.isArray(obj)) return obj.map(safeSerialize);
-      if (typeof obj === 'object') {
+      if (typeof obj === "object") {
         const serialized = {};
         for (const [key, value] of Object.entries(obj)) {
           serialized[key] = safeSerialize(value);
@@ -1535,18 +1425,86 @@ export async function updateCleanerReviewScore(req, res) {
       message: "Score updated successfully in both tables",
       data: {
         review: safeSerialize(updatedReview),
-        hygieneScore: safeSerialize(updatedHygieneScore)
-      }
+        hygieneScore: safeSerialize(updatedHygieneScore),
+      },
     });
-
   } catch (error) {
     console.error("Error updating score:", error);
     return res.status(500).json({
       success: false,
       message: "Failed to update score",
-      error: error.message
+      error: error.message,
     });
   }
 }
 
+export async function createDemoCleanerReview(req, res) {
+  try {
+    const { company_id, name, location_id } = req.body;
 
+    // The user performing the demo (usually the Admin)
+    const cleaner_user_id = req.user.id;
+
+    // Directly create a "completed" task
+    const review = await prisma.cleaner_review.create({
+      data: {
+        name: name || "Demo Washroom Cleaning",
+        location_id: location_id ? BigInt(location_id) : null,
+        latitude: null,
+        longitude: null,
+        address: "Demo Location (App Preview)",
+        cleaner_user_id: BigInt(cleaner_user_id),
+        tasks: [
+          "Clean and disinfect all WC seats",
+          "Wipe and sanitise wash basins",
+          "Clean and flush all urinals",
+          "Empty and reline dustbins",
+        ],
+        initial_comment: "Demo task started via App Preview",
+        final_comment: "Demo task completed successfully",
+
+        // Use placeholder images since we bypassed Multer
+        before_photo: [
+          "https://placehold.co/600x400/e2e8f0/64748b?text=Simulated+Before+Photo",
+        ],
+        after_photo: [
+          "https://placehold.co/600x400/dcfce7/16a34a?text=Simulated+After+Photo",
+        ],
+
+        status: "completed",
+        score: 9.5, // Dummy AI Score for the dashboard
+        company_id: company_id ? BigInt(company_id) : null,
+
+        // Simulate task duration (started 15 minutes ago)
+        created_at: new Date(Date.now() - 15 * 60000),
+        updated_at: new Date(),
+      },
+    });
+
+    const safeSerialize = (obj) => {
+      if (obj === null || obj === undefined) return obj;
+      if (typeof obj === "bigint") return obj.toString();
+      if (obj instanceof Date) return obj.toISOString();
+      if (Array.isArray(obj)) return obj.map(safeSerialize);
+      if (typeof obj === "object") {
+        const serialized = {};
+        for (const [key, value] of Object.entries(obj)) {
+          serialized[key] = safeSerialize(value);
+        }
+        return serialized;
+      }
+      return obj;
+    };
+
+    const serializedData = safeSerialize(review);
+
+    res.status(201).json({
+      status: "success",
+      message: "Demo review created successfully",
+      data: serializedData,
+    });
+  } catch (err) {
+    console.error("Create Demo Review Error:", err);
+    res.status(500).json({ status: "error", detail: err.message });
+  }
+}

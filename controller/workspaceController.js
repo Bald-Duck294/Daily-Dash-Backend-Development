@@ -4,25 +4,26 @@ import { serializeBigInt } from "../utils/serializer.js";
 
 const prisma = new PrismaClient();
 
-// Role and Type Mappings (Adjust these IDs based on your actual DB records)
-const TYPE_MAPPING = { building: 1, floor: 2, zone: 3, ward: 7 };
-const WASHROOM_TYPE_ID = 4;
-const ROLE_MAPPING = { cleaner: 5, supervisor: 3, manager: 2 };
+// Use the exact role IDs from your database
+const ROLE_MAPPING = { cleaner: 5, supervisor: 3, manager: 2, admin: 2 };
 
 export const deployWorkspace = async (req, res) => {
   try {
-    const { discovery, hierarchy = [], washrooms = [], users = [] } = req.body;
+    const { hierarchy = [], washrooms = [], users = [] } = req.body;
     const companyId = req.user.company_id;
 
     if (!companyId) {
       return res.status(400).json({
         success: false,
-        error: "Company ID is required for deployment.",
+        code: "MISSING_COMPANY",
+        message: "Company ID is required for deployment.",
       });
     }
 
+    const generatedCredentials = []; // To store plain PINs for post-transaction SMS/Logging
+
     // 🚀 START DATABASE TRANSACTION
-    const result = await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx) => {
       // ==========================================
       // 🚨 STEP 0: SAAS LIMITS BULK VERIFICATION
       // ==========================================
@@ -31,17 +32,16 @@ export const deployWorkspace = async (req, res) => {
           OR: [{ company_id: BigInt(companyId) }, { company_id: null }],
           is_enabled: true,
         },
-        orderBy: { company_id: "asc" }, // Prioritize company specific over global
+        orderBy: { company_id: "asc" },
       });
 
-      // Helper to get limit safely
       const getLimit = (key) => limits.find((l) => l.limit_key === key);
-
       const washroomLimit = getLimit("MAX_WASHROOMS");
       const userLimit = getLimit("MAX_USERS");
       const cleanerLimit = getLimit("MAX_CLEANERS");
-
-      const newCleanersCount = users.filter((u) => u.role === "cleaner").length;
+      const newCleanersCount = users.filter(
+        (u) => u.role.toLowerCase() === "cleaner",
+      ).length;
 
       if (
         washroomLimit &&
@@ -64,30 +64,45 @@ export const deployWorkspace = async (req, res) => {
       }
 
       // ==========================================
-      // 🏢 STEP 1: FACILITY PROFILE (Tenant)
+      // 🏗️ STEP 2: DYNAMIC LOCATION TYPES (Resolve Once)
       // ==========================================
-      const facilityName = discovery?.facility_type
-        ? `${discovery.facility_type} Facility`
-        : "Main Facility";
+      const uniqueTypes = new Set(hierarchy.map((n) => n.type.toLowerCase()));
+      uniqueTypes.add("washroom"); // Explicitly ensure washroom is mapped
 
-      const facility = await tx.facility_companies.create({
-        data: {
-          name: facilityName,
-          company_id: BigInt(companyId),
-          description: `Staff: ${discovery?.staff_size} | Scope: ${discovery?.operational_scope}`,
-        },
+      const existingTypes = await tx.location_types.findMany({
+        where: { company_id: BigInt(companyId) },
       });
 
-      // ==========================================
-      // 🗺️ STEP 2: HIERARCHY (Topological Sort & ID Mapping)
-      // ==========================================
-      const idMap = {}; // Maps temp_id -> real_db_id
-      const nodesToProcess = [...hierarchy];
+      const typeMap = {};
 
-      // Keep processing until array is empty (handles nested depth dynamically)
+      for (const typeName of uniqueTypes) {
+        const existing = existingTypes.find(
+          (t) => t.name.toLowerCase() === typeName,
+        );
+
+        if (existing) {
+          typeMap[typeName] = existing.id;
+        } else {
+          const isToilet = typeName === "washroom";
+          const newType = await tx.location_types.create({
+            data: {
+              name: typeName.charAt(0).toUpperCase() + typeName.slice(1), // Capitalize first letter
+              company_id: BigInt(companyId),
+              is_toilet: isToilet,
+            },
+          });
+          typeMap[typeName] = newType.id;
+        }
+      }
+
+      // ==========================================
+      // 🗺️ STEP 3: HIERARCHY (Topological Sort)
+      // ==========================================
+      const idMap = {};
+      const nodesToProcess = [...hierarchy];
       let safetyCounter = 0;
+
       while (nodesToProcess.length > 0) {
-        // Find a node whose parent is either null, or already processed in idMap
         const nodeIndex = nodesToProcess.findIndex(
           (n) => !n.parent_temp_id || idMap[n.parent_temp_id],
         );
@@ -97,39 +112,39 @@ export const deployWorkspace = async (req, res) => {
         }
 
         const node = nodesToProcess.splice(nodeIndex, 1)[0];
+        const resolvedTypeId = typeMap[node.type.toLowerCase()];
 
         const createdNode = await tx.locations.create({
           data: {
             name: node.name,
-            type_id: BigInt(TYPE_MAPPING[node.type] || 3),
+            type_id: resolvedTypeId,
             parent_id: node.parent_temp_id
               ? BigInt(idMap[node.parent_temp_id])
               : null,
             company_id: BigInt(companyId),
-            facility_company_id: facility.id,
             status: true,
           },
         });
 
-        // Map the temporary frontend ID to the real database ID
         idMap[node.temp_id] = createdNode.id;
         safetyCounter++;
       }
 
       // ==========================================
-      // 🚻 STEP 3: WASHROOMS
+      // 🚻 STEP 4: WASHROOMS
       // ==========================================
+      const washroomTypeId = typeMap["washroom"];
+
       for (const w of washrooms) {
         const createdWashroom = await tx.locations.create({
           data: {
             name: w.name,
-            type_id: BigInt(WASHROOM_TYPE_ID),
+            type_id: washroomTypeId,
             parent_id: w.zone_temp_id ? BigInt(idMap[w.zone_temp_id]) : null,
             company_id: BigInt(companyId),
-            facility_company_id: facility.id,
             status: true,
             options: {
-              type: w.type,
+              type: w.type, // Male, Female, Accessible, etc.
               wc_count: w.wc_count,
               basin_count: w.basin_count,
             },
@@ -139,33 +154,40 @@ export const deployWorkspace = async (req, res) => {
       }
 
       // ==========================================
-      // 👥 STEP 4: USERS & ASSIGNMENTS
+      // 👥 STEP 5: USERS & ASSIGNMENTS
       // ==========================================
-      const defaultPassword = await bcrypt.hash("Safai@123", 10);
-
       for (const u of users) {
-        const roleId = ROLE_MAPPING[u.role] || 5;
+        const roleId = ROLE_MAPPING[u.role.toLowerCase()] || 5;
 
-        // Create User
+        // Secure PIN Generation (Frontend never sees this during request)
+        const plainPin = Math.floor(100000 + Math.random() * 900000).toString();
+        const hashedPassword = await bcrypt.hash(plainPin, 10);
+
         const createdUser = await tx.users.create({
           data: {
             name: u.name,
             phone: u.phone,
             role_id: roleId,
             company_id: BigInt(companyId),
-            password: defaultPassword,
+            password: hashedPassword,
             created_by: BigInt(req.user.id),
           },
         });
 
-        // Determine Assignment Location
+        generatedCredentials.push({
+          name: u.name,
+          phone: u.phone,
+          pin: plainPin,
+          role: u.role,
+        });
+
         const targetTempId =
           u.assigned_washroom_temp_id || u.assigned_zone_temp_id;
 
         if (targetTempId && idMap[targetTempId]) {
           await tx.cleaner_assignments.create({
             data: {
-              name: `Assignment: ${u.name}`,
+              name: `${u.name} Assignment`,
               cleaner_user_id: createdUser.id,
               company_id: BigInt(companyId),
               location_id: BigInt(idMap[targetTempId]),
@@ -178,8 +200,12 @@ export const deployWorkspace = async (req, res) => {
       }
 
       // ==========================================
-      // 📈 STEP 5: COMMIT BULK LIMIT UPDATES
+      // 📈 STEP 6: COMMIT BULK LIMIT UPDATES
       // ==========================================
+      await tx.companies.update({
+        where: { id: BigInt(companyId) },
+        data: { is_onboarding_completed: true },
+      });
       if (washroomLimit && washrooms.length > 0) {
         await tx.system_limits.update({
           where: { id: washroomLimit.id },
@@ -198,50 +224,52 @@ export const deployWorkspace = async (req, res) => {
           data: { current_value: { increment: newCleanersCount } },
         });
       }
-
-      return facility;
     });
 
-    // 🚀 SUCCESS RESPONSE
+    // 📱 STEP 7: POST-TRANSACTION LOGIC (SMS will go here later)
+    console.log("SUCCESS! Generated Credentials:", generatedCredentials);
+
+    // 🚀 RETURN SUCCESS
     res.status(201).json({
       success: true,
-      message: "Workspace generated successfully",
-      data: serializeBigInt({
-        facility_id: result.id,
-      }),
+      message: "Workspace deployed successfully",
     });
   } catch (error) {
     console.error("Workspace Deployment Error:", error);
 
-    // Friendly Error Translations
+    // Structured Error Handling
     if (error.code === "P2002") {
       return res.status(422).json({
         success: false,
-        error: "Validation failed",
-        details:
+        code: "PHONE_ALREADY_EXISTS",
+        step: "users",
+        message:
           "One or more user phone numbers are already registered in the system.",
       });
     }
+
     if (error.message.startsWith("LIMIT_")) {
       const parts = error.message.split(":");
       return res.status(403).json({
         success: false,
-        error: "Quota Exceeded",
-        details: `Your plan limits you to ${parts[1]} ${parts[0].replace("LIMIT_", "").toLowerCase()}. Please upgrade your plan or reduce the scope.`,
+        code: "QUOTA_EXCEEDED",
+        message: `Your plan limits you to ${parts[1]} ${parts[0].replace("LIMIT_", "").toLowerCase()}.`,
       });
     }
+
     if (error.message === "HIERARCHY_CIRCULAR_DEPENDENCY") {
       return res.status(400).json({
         success: false,
-        error: "Validation failed",
-        details:
-          "Invalid hierarchy structure. A node cannot be its own parent.",
+        code: "INVALID_PARENT",
+        step: "hierarchy",
+        message: "Invalid hierarchy structure. Circular dependency detected.",
       });
     }
 
     res.status(500).json({
       success: false,
-      error: "Deployment failed",
+      code: "SERVER_ERROR",
+      message: "Deployment failed due to a server error.",
       details: error.message,
     });
   }
