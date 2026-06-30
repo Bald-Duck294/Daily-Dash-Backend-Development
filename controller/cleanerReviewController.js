@@ -53,13 +53,13 @@ export async function getCleanerReview(req, res) {
         after_photo: true,
         cleaner_user: {
           select: {
-            id:true,
+           
             name: true, // Only get the cleaner's name
           },
         },
         location: {
           select: {
-            id:true,
+          
             name: true, // Only get the location name
           },
         },
