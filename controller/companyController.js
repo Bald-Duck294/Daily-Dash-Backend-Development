@@ -210,3 +210,63 @@ export const setupCompany = async (req, res) => {
     res.status(500).json({ error: "Failed to save company profile" });
   }
 };
+
+// controllers/companyController.js
+
+export const getOnboardingStatus = async (req, res) => {
+  console.log("Fetching onboarding status for user:", req.user);
+  try {
+    const companyId = req.user.company_id;
+    if (!companyId) {
+      return res
+        .status(400)
+        .json({ message: "No company associated with this user." });
+    }
+
+    const company = await prisma.companies.findUnique({
+      where: { id: BigInt(companyId) },
+    });
+
+    if (!company) {
+      return res.status(404).json({ message: "Company not found." });
+    }
+    const locationCount = await prisma.locations.count({
+      where: {
+        company_id: BigInt(companyId),
+        deleted_at: null,
+      },
+    });
+
+    const hasWorkspace =
+      locationCount > 0 || Boolean(company.is_onboarding_completed); // Check if profile is complete (Name is set and not default, metadata exists)
+    const hasProfile =
+      company.name &&
+      company.name !== "Pending Setup" &&
+      company.onboarding_metadata;
+
+    // const isCompleted = company.is_onboarding_completed;
+
+    let nextStep = "dashboard";
+    // if (!isCompleted) {
+    //   if (!hasProfile) {
+    //     nextStep = "company";
+    //   } else {
+    //     nextStep = "workspace";
+    //   }
+    // }
+
+    if (!hasWorkspace) {
+      if (!hasProfile) nextStep = "company";
+      else nextStep = "workspace";
+    }
+    res.status(200).json({
+      companyProfileCompleted: Boolean(hasProfile),
+      workspaceExists: hasWorkspace,
+      isOnboardingCompleted: Boolean(company.is_onboarding_completed),
+      nextStep,
+    });
+  } catch (error) {
+    console.error("Error fetching onboarding status:", error);
+    res.status(500).json({ message: "Failed to fetch onboarding status" });
+  }
+};
