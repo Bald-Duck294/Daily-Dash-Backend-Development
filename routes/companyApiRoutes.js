@@ -13,7 +13,11 @@ companyRouter
   .post(companyController.createCompany);
 
 companyRouter.get("/count", companyController.getCompaniesCount);
-
+companyRouter.get(
+  "/onboarding-status",
+  verifyToken,
+  companyController.getOnboardingStatus,
+);
 // Route to get, update, and delete a specific company by ID
 // GET /api/companies/:id
 // POST /api/companies/:id (for update)
