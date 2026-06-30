@@ -12,38 +12,20 @@ import RBACFilterService from "../utils/rbacFilterService.js";
 // const BASE_URL = process.env.BASE_URL || "https://safai-index-backend.onrender.com";
 
 export async function getCleanerReview(req, res) {
-  const user = req.user;
-
-  // console.log(req.query, "query form the get cleaner user")
-  // if (!user) {
-  //   return res.status(401).json({ message: "Unauthorized" });
-  // }
-
-  // console.log("request made from get cleaner reviews");
-
   const { cleaner_user_id, status, date, company_id } = req.query;
-
-  // console.log(company_id, "company_id from get cleaner review");
 
   try {
     const whereClause = {};
 
-    // const roleFilter = await RBACFilterService.getLocationFilter(user, "cleaner_activity");
-
-    // if (roleFilter) {
-    //   Object.assign(whereClause, roleFilter);
-    // }
     if (cleaner_user_id) {
       whereClause.cleaner_user_id = BigInt(cleaner_user_id);
     }
     if (company_id) {
       whereClause.company_id = BigInt(company_id);
     }
-
     if (status) {
       whereClause.status = status;
     }
-
     if (date) {
       const startDate = new Date(date);
       startDate.setUTCHours(0, 0, 0, 0);
@@ -57,26 +39,39 @@ export async function getCleanerReview(req, res) {
       };
     }
 
-    // console.log(whereClause, "cleaner-review , finla where clause ")
-
     const reviews = await prisma.cleaner_review.findMany({
       where: whereClause,
-      include: {
+      // ✅ CHANGED: Use 'select' instead of 'include' to fetch ONLY what the UI needs
+      select: {
+        id: true,
+        status: true,
+        score: true,
+        original_score: true,
+        is_modified: true,
+        created_at: true,
+        before_photo: true, 
+        after_photo: true,
         cleaner_user: {
-          include: {
-            role: true, // Include all role fields
+          select: {
+            id:true,
+            name: true, // Only get the cleaner's name
           },
         },
         location: {
-          include: {
-            location_types: true,
-            locations: true,
+          select: {
+            id:true,
+            name: true, // Only get the location name
           },
         },
-        company: true, // Include all company fields
+        hygiene_score: {
+          select: {
+            id:true,
+            details: true, // Only get the AI details JSON, ignore the rest
+          }
+        }
       },
       orderBy: {
-        created_at: "desc", // 'desc' for newest first, 'asc' for oldest first
+        created_at: "desc", 
       },
     });
 
@@ -86,13 +81,21 @@ export async function getCleanerReview(req, res) {
       // ✅ Handle BigInt
       if (typeof obj === "bigint") return obj.toString();
 
-      // ✅ Handle Date objects BEFORE generic object handling
+      // ✅ Handle Date objects
       if (obj instanceof Date) return obj.toISOString();
+
+      // ✅ Handle Prisma Decimal (Fixes the {s: 1, e: 0, d: [7, 9000000]} issue)
+      if (typeof obj === "object" && typeof obj.toNumber === "function") {
+        return obj.toNumber();
+      }
+      if (obj.d && obj.e !== undefined && obj.s !== undefined) {
+        return parseFloat(`${obj.s < 0 ? '-' : ''}${obj.d.join('')}e${obj.e - obj.d.length + 1}`);
+      }
 
       // ✅ Handle Arrays
       if (Array.isArray(obj)) return obj.map(safeSerialize);
 
-      // ✅ Handle generic objects (but after Date check)
+      // ✅ Handle generic objects
       if (typeof obj === "object") {
         const serialized = {};
         for (const [key, value] of Object.entries(obj)) {
@@ -101,23 +104,11 @@ export async function getCleanerReview(req, res) {
         return serialized;
       }
 
-      // ✅ Return primitives as-is
       return obj;
     };
 
-    //  Serialize all review data
     const serializedReviews = reviews.map((review) => safeSerialize(review));
-    // console.log('befor serilize', serializedReviews);
-    // const serialized = reviews.map((r) => {
-    //   const safeReview = {};
-    //   for (const [key, value] of Object.entries(r)) {
-    //     safeReview[key] = typeof value === "bigint" ? value.toString() : value;
-    //   }
-    //   return safeReview;
-    // });
-    // console.log(serialized, "serilized data")
-    // console.log(serialized.length, "data");
-    // console.log(serializedReviews, "serilized reviews")
+    
     res.json(serializedReviews);
   } catch (err) {
     console.error("Fetch Cleaner Reviews Error:", err);
