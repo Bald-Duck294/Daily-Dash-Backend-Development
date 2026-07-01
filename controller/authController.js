@@ -159,7 +159,6 @@
 // //   }
 // // };
 
-
 // // controllers/authController.js
 
 // export const loginUser = async (req, res) => {
@@ -266,7 +265,6 @@
 //   }
 // };
 
-
 import prisma from "../config/prismaClient.mjs";
 import bcrypt from "bcryptjs";
 import { generateToken } from "../utils/jwt.js";
@@ -340,18 +338,21 @@ export const registerUser = async (req, res) => {
 
 // --- 1. PASSWORD LOGIN ---
 
-
 const validateAccess = (user) => {
   const NO_DASHBOARD_ROLES = [5]; // e.g., Cleaners
 
   if (NO_DASHBOARD_ROLES.includes(user.role_id)) {
-    const error = new Error("Dashboard access is not available for your role. Please use the mobile app.");
+    const error = new Error(
+      "Dashboard access is not available for your role. Please use the mobile app.",
+    );
     error.statusCode = 403;
     throw error;
   }
 
   if (!user.role || !Array.isArray(user.role.permissions)) {
-    const error = new Error("Invalid role configuration. Please contact support.");
+    const error = new Error(
+      "Invalid role configuration. Please contact support.",
+    );
     error.statusCode = 500;
     throw error;
   }
@@ -360,16 +361,16 @@ const validateAccess = (user) => {
 // --- UNIVERSAL BIGINT SERIALIZER ---
 const serializeData = (obj) => {
   if (obj === null || obj === undefined) return obj;
-  
+
   // ✅ Convert BigInt to string
   if (typeof obj === "bigint") return obj.toString();
-  
+
   // ✅ Handle Dates correctly so they don't break
   if (obj instanceof Date) return obj.toISOString();
-  
+
   // ✅ Recursively handle Arrays
   if (Array.isArray(obj)) return obj.map(serializeData);
-  
+
   // ✅ Recursively handle nested Objects (like role, permissions, company)
   if (typeof obj === "object") {
     const serialized = {};
@@ -378,45 +379,50 @@ const serializeData = (obj) => {
     }
     return serialized;
   }
-  
+
   return obj;
 };
 export const loginUser = async (req, res) => {
   const { phone, password } = req.body;
-  if (!phone || !password) return res.status(400).json({ error: "Phone and password required." });
+  if (!phone || !password)
+    return res.status(400).json({ error: "Phone and password required." });
 
   try {
     // ✅ ADD `companies: true` TO INCLUDE
-    const user = await prisma.users.findUnique({ 
-      where: { phone }, 
-      include: { role: true, companies: true } // Use 'company: true' if your schema names it that way
+    const user = await prisma.users.findUnique({
+      where: { phone },
+      include: { role: true, companies: true }, // Use 'company: true' if your schema names it that way
     });
-    
-    if (!user || !user.password) return res.status(401).json({ error: "Invalid credentials." });
+
+    if (!user || !user.password)
+      return res.status(401).json({ error: "Invalid credentials." });
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(401).json({ error: "Invalid credentials." });
+    if (!isMatch)
+      return res.status(401).json({ error: "Invalid credentials." });
 
     validateAccess(user);
 
-    const token = generateToken({ 
-      id: user.id.toString(), 
-      email: user.email, 
-      role_id: user.role_id, 
-      permissions: user.role.permissions 
+    const token = generateToken({
+      id: user.id.toString(),
+      email: user.email,
+      company_id: user.company_id?.toString(),
+      role_id: user.role_id,
+      permissions: user.role.permissions,
     });
-    
-    await prisma.users.update({ where: { id: user.id }, data: { token } });
 
+    await prisma.users.update({ where: { id: user.id }, data: { token } });
 
     const responsePayload = {
       status: "success",
       user: { ...user, token }, // No more sanitizeUser here
-      company: user.companies || user.company
+      company: user.companies || user.company,
     };
-   res.json(serializeData(responsePayload));
+    res.json(serializeData(responsePayload));
   } catch (err) {
-    res.status(err.statusCode || 500).json({ error: err.message || "Login failed" });
+    res
+      .status(err.statusCode || 500)
+      .json({ error: err.message || "Login failed" });
   }
 };
 
@@ -424,59 +430,64 @@ export const loginUser = async (req, res) => {
 export const googleLogin = async (req, res) => {
   const { idToken } = req.body;
   try {
-    const ticket = await client.verifyIdToken({ idToken, audience: process.env.GOOGLE_CLIENT_ID });
+    const ticket = await client.verifyIdToken({
+      idToken,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
     const { sub: google_id, email, name } = ticket.getPayload();
 
     // ✅ ADD `companies: true` TO ALL findUnique/update queries
-    let user = await prisma.users.findUnique({ 
-      where: { google_id }, 
-      include: { role: true, companies: true } 
+    let user = await prisma.users.findUnique({
+      where: { google_id },
+      include: { role: true, companies: true },
     });
 
     if (!user) {
-      user = await prisma.users.findUnique({ 
-        where: { email }, 
-        include: { role: true, companies: true } 
+      user = await prisma.users.findUnique({
+        where: { email },
+        include: { role: true, companies: true },
       });
-      
+
       if (user) {
-        user = await prisma.users.update({ 
-          where: { id: user.id }, 
-          data: { google_id }, 
-          include: { role: true, companies: true } 
+        user = await prisma.users.update({
+          where: { id: user.id },
+          data: { google_id },
+          include: { role: true, companies: true },
         });
       } else {
-        user = await prisma.users.create({ 
-          data: { 
-            email: email, 
-            name: name, 
-            google_id: google_id, 
-            role_id: 2 
-          }, 
-          include: { role: true, companies: true } 
+        user = await prisma.users.create({
+          data: {
+            email: email,
+            name: name,
+            google_id: google_id,
+            role_id: 2,
+          },
+          include: { role: true, companies: true },
         });
       }
     }
 
     validateAccess(user);
-    
-    const token = generateToken({ 
-      id: user.id.toString(), 
-      email: user.email, 
-      role_id: user.role_id, 
-      permissions: user.role.permissions 
+
+    const token = generateToken({
+      id: user.id.toString(),
+      email: user.email,
+      role_id: user.role_id,
+      permissions: user.role.permissions,
     });
 
-const responsePayload = {
+    const responsePayload = {
       status: "success",
       user: { ...user, token },
-      company: user.companies || user.company
+      company: user.companies || user.company,
     };
 
-   res.json(serializeData(responsePayload));
+    res.json(serializeData(responsePayload));
   } catch (err) {
     console.error("Google Auth Error:", err);
-    res.status(err.statusCode || 401).json({ error: err.message || "Google authentication failed" });
+    res
+      .status(err.statusCode || 401)
+      .json({ error: err.message || "Google authentication failed" });
   }
 };
 export const requestOtp = async (req, res) => {
@@ -488,7 +499,7 @@ export const requestOtp = async (req, res) => {
 
   // 1. Generate a random 6-digit OTP
   const code = Math.floor(100000 + Math.random() * 900000).toString();
-  
+
   // 2. Set expiry (e.g., 10 minutes from now)
   const expires_at = new Date(Date.now() + 10 * 60 * 1000);
 
@@ -497,7 +508,7 @@ export const requestOtp = async (req, res) => {
     await prisma.otps.upsert({
       where: { phone },
       update: { code, expires_at },
-      create: { phone, code, expires_at }
+      create: { phone, code, expires_at },
     });
 
     // 4. In a real app, you would send this via SMS (Twilio/Msg91)
@@ -515,18 +526,32 @@ export const verifyOtp = async (req, res) => {
   const { phone, code } = req.body;
   const otpRecord = await prisma.otps.findUnique({ where: { phone } });
 
-  if (!otpRecord || otpRecord.code !== code || new Date() > otpRecord.expires_at) {
+  if (
+    !otpRecord ||
+    otpRecord.code !== code ||
+    new Date() > otpRecord.expires_at
+  ) {
     return res.status(400).json({ error: "Invalid or expired OTP" });
   }
 
-  let user = await prisma.users.findUnique({ where: { phone }, include: { role: true } });
-  
+  let user = await prisma.users.findUnique({
+    where: { phone },
+    include: { role: true },
+  });
+
   if (!user) {
-    user = await prisma.users.create({ data: { phone, role_id: 2 }, include: { role: true } });
+    user = await prisma.users.create({
+      data: { phone, role_id: 2 },
+      include: { role: true },
+    });
   }
 
   validateAccess(user);
-  const token = generateToken({ id: user.id.toString(), role_id: user.role_id, permissions: user.role.permissions });
+  const token = generateToken({
+    id: user.id.toString(),
+    role_id: user.role_id,
+    permissions: user.role.permissions,
+  });
   res.json({ status: "success", user: { ...user, token } });
 };
 
