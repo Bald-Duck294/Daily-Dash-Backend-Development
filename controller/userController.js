@@ -883,60 +883,107 @@ export const deleteUser = async (req, res) => {
   }
 };
 
-export const changeOwnPassword = async (req, res) => {
+export const updateProfile = async (req, res) => {
   try {
     // 🔐 userId MUST come from auth middleware
     const userId = BigInt(req.user.id);
 
-    const { currentPassword, newPassword } = req.body;
+    const { name, email, phone, currentPassword, newPassword } = req.body;
 
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({
-        message: "Current password and new password are required",
+    const updateData = {
+      updated_at: new Date(),
+    };
+
+    if (name) updateData.name = name;
+    if (phone !== undefined) updateData.phone = phone; 
+
+    // Handle Email Update
+    if (email) {
+      const existingUser = await prisma.users.findUnique({
+        where: { email },
+        select: { id: true }
       });
+
+      if (existingUser && existingUser.id !== userId) {
+        return res.status(400).json({
+          success: false,
+          message: "This email is already in use by another account.",
+        });
+      }
+      updateData.email = email;
     }
 
-    if (newPassword.length < 8) {
-      return res.status(400).json({
-        message: "Password must be at least 8 characters long",
+    // Handle Password Update
+    const isChangingPassword = currentPassword || newPassword;
+
+    if (isChangingPassword) {
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({
+          success: false,
+          message: "Current password and new password are required to change password.",
+        });
+      }
+
+      if (newPassword.length < 6) {
+        return res.status(400).json({
+          success: false,
+          message: "Password must be at least 6 characters long.",
+        });
+      }
+
+      const user = await prisma.users.findUnique({
+        where: { id: userId },
+        select: { password: true },
       });
+
+      if (!user || !user.password) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found.",
+        });
+      }
+
+      // bcryptjs compare works identically
+      const isValid = await bcrypt.compare(currentPassword, user.password);
+      if (!isValid) {
+        return res.status(401).json({
+          success: false,
+          message: "Current password is incorrect.",
+        });
+      }
+
+      // bcryptjs hash works identically
+      updateData.password = await bcrypt.hash(newPassword, 10);
     }
 
-    const user = await prisma.users.findUnique({
+    const updatedUser = await prisma.users.update({
       where: { id: userId },
-      select: { password: true },
-    });
-
-    if (!user || !user.password) {
-      return res.status(404).json({
-        message: "User not found",
-      });
-    }
-
-    const isValid = await bcrypt.compare(currentPassword, user.password);
-    if (!isValid) {
-      return res.status(401).json({
-        message: "Current password is incorrect",
-      });
-    }
-
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-
-    await prisma.users.update({
-      where: { id: userId },
-      data: {
-        password: hashedPassword,
-        updated_at: new Date(),
+      data: updateData,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        role_id: true,
       },
     });
 
-    res.status(200).json({
-      message: "Password updated successfully",
+    const safeUser = {
+      ...updatedUser,
+      id: updatedUser.id.toString(),
+    };
+
+    return res.status(200).json({
+      success: true,
+      message: "Profile updated successfully",
+      data: safeUser,
     });
+
   } catch (error) {
-    console.error("changeOwnPassword:", error);
-    res.status(500).json({
-      message: "Error updating password",
+    console.error("updateProfile Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "An error occurred while updating the profile.",
     });
   }
 };

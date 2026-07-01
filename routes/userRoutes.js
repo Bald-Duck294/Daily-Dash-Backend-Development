@@ -8,7 +8,7 @@ import {
   getUsersCount,
   updateUser,
   getUserById,
-  changeOwnPassword,
+  updateProfile,
 } from "../controller/userController.js";
 import { verifyToken } from "../middlewares/authMiddleware.js";
 
@@ -18,8 +18,8 @@ userRouter.get("/", verifyToken, getUser);
 userRouter.get("/client", verifyToken, getclientUser);
 userRouter.get("/count", verifyToken, getUsersCount);
 userRouter.get("/:id", getUserById);
-userRouter.post("/",  verifyToken, createUser);
+userRouter.post("/", verifyToken, createUser);
 userRouter.post("/:id", verifyToken, updateUser);
 userRouter.delete("/:id", deleteUser);
-userRouter.patch("/change-password", changeOwnPassword);
+userRouter.patch("/update-profile",verifyToken, updateProfile);
 export default userRouter;
