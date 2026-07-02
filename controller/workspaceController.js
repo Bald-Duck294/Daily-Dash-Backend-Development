@@ -284,3 +284,194 @@ export const deployWorkspace = async (req, res) => {
     });
   }
 };
+
+export const getWorkspaceStatus = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+
+    if (!companyId) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Company ID missing" });
+    }
+
+    // Execute independent counts concurrently
+    const [
+      hierarchyCount,
+      washroomCount,
+      workspaceUserCount,
+      assignmentCount,
+      lastAssignment,
+    ] = await Promise.all([
+      // Count locations that are NOT toilets
+      prisma.locations.count({
+        where: {
+          company_id: BigInt(companyId),
+          location_types: { is_toilet: false },
+        },
+      }),
+      // Count locations that ARE toilets
+      prisma.locations.count({
+        where: {
+          company_id: BigInt(companyId),
+          location_types: { is_toilet: true },
+        },
+      }),
+      // Count all users EXCEPT Admin (role_id 2)
+      prisma.users.count({
+        where: { company_id: BigInt(companyId), role_id: { not: 2 } },
+      }),
+      // Count total assignments
+      prisma.cleaner_assignments.count({
+        where: { company_id: BigInt(companyId) },
+      }),
+      // Get the latest assignment to determine lastConfiguredAt
+      prisma.cleaner_assignments.findFirst({
+        where: { company_id: BigInt(companyId) },
+        orderBy: { created_at: "desc" },
+        select: { created_at: true },
+      }),
+    ]);
+
+    // DB is the source of truth for workspace configuration
+    const configured =
+      hierarchyCount > 0 ||
+      washroomCount > 0 ||
+      workspaceUserCount > 0 ||
+      assignmentCount > 0;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        configured,
+        hierarchyCount,
+        washroomCount,
+        workspaceUserCount,
+        assignmentCount,
+        lastConfiguredAt: lastAssignment?.created_at || null,
+      },
+    });
+  } catch (error) {
+    console.error("Workspace Status Error:", error);
+    res
+      .status(500)
+      .json({ success: false, error: "Failed to fetch workspace status" });
+  }
+};
+
+// ==========================================
+// POST /workspace/reset
+// ==========================================
+export const resetWorkspace = async (req, res) => {
+  try {
+    const companyId = req.user.company_id;
+
+    // Authorization Check: Only Admin (Role 2)
+    if (req.user.role_id !== 2) {
+      return res
+        .status(403)
+        .json({ success: false, error: "Forbidden: Administrators only." });
+    }
+
+    // 🚀 ATOMIC TRANSACTION
+    await prisma.$transaction(
+      async (tx) => {
+        // 1. Delete Dependent Review/Log Records
+        await tx.cleaner_review.deleteMany({
+          where: { company_id: BigInt(companyId) },
+        });
+        await tx.user_review.deleteMany({
+          where: { company_id: BigInt(companyId) },
+        });
+
+        // activity_logs relations point to 'users'
+        await tx.activity_logs.deleteMany({
+          where: { users: { company_id: BigInt(companyId) } },
+        });
+
+        // 2. Delete Assignments
+        await tx.cleaner_assignments.deleteMany({
+          where: { company_id: BigInt(companyId) },
+        });
+
+        // shift_assignments relations point to 'user'
+        await tx.shift_assignments.deleteMany({
+          where: { user: { company_id: BigInt(companyId) } },
+        });
+
+        // 3. Delete Saved Locations
+        // saved_locations relations point to 'users'
+        await tx.saved_locations.deleteMany({
+          where: { users: { company_id: BigInt(companyId) } },
+        });
+
+        // 4. Delete Hygiene Scores
+        await tx.hygiene_scores.deleteMany({
+          where: { company_id: BigInt(companyId) },
+        });
+
+        // 5. Cleanup User Tokens & Sessions BEFORE deleting users (due to onDelete: NoAction)
+        await tx.sessions.deleteMany({
+          where: {
+            users: { company_id: BigInt(companyId), role_id: { not: 2 } },
+          },
+        });
+        await tx.refresh_tokens.deleteMany({
+          where: {
+            users: { company_id: BigInt(companyId), role_id: { not: 2 } },
+          },
+        });
+
+        // 6. Delete Workspace Users (Keep Admin: role_id 2)
+        await tx.users.deleteMany({
+          where: { company_id: BigInt(companyId), role_id: { not: 2 } },
+        });
+
+        // 7. Clear Foreign Keys and Delete Locations
+        await tx.locations.updateMany({
+          where: { company_id: BigInt(companyId) },
+          data: { parent_id: null, type_id: null },
+        });
+        await tx.locations.deleteMany({
+          where: { company_id: BigInt(companyId) },
+        });
+
+        // 8. Clear Parent Keys and Delete Location Types
+        await tx.location_types.updateMany({
+          where: { company_id: BigInt(companyId) },
+          data: { parent_id: null },
+        });
+        await tx.location_types.deleteMany({
+          where: { company_id: BigInt(companyId) },
+        });
+
+        // 9. Reset System Limits to 0
+        await tx.system_limits.updateMany({
+          where: { company_id: BigInt(companyId) },
+          data: { current_value: 0 },
+        });
+
+        // 10. Finalize Company Status (Leave onboarding_metadata untouched)
+        await tx.companies.update({
+          where: { id: BigInt(companyId) },
+          data: { is_onboarding_completed: false },
+        });
+      },
+      {
+        maxWait: 10000,
+        timeout: 30000,
+      },
+    );
+
+    res
+      .status(200)
+      .json({ success: true, message: "Workspace reset complete." });
+  } catch (error) {
+    console.error("Workspace Reset Error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Reset failed. Transaction rolled back.",
+      details: error.message,
+    });
+  }
+};
