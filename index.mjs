@@ -31,6 +31,7 @@ import iotRoutes from "./routes/iotRoutes.js";
 import getattendanceRoute from "./routes/attendanceRoute.js";
 import systemLimitsRouter from "./routes/systemLimitsRoutes.js";
 import workspaceRouter from "./routes/workspaceRoutes.js";
+import ai_insights_Router from "./routes/aiInsightRoute.js";
 dotenv.config();
 
 // ✅ NAYA FIREBASE INITIALIZATION LOGIC (.env se read karega)
@@ -126,6 +127,7 @@ app.use("/api/attendance", getattendanceRoute);
 app.use("/api/limits", systemLimitsRouter);
 app.use("/api/workspace", workspaceRouter);
 app.use("/uploads", express.static("uploads"));
+app.use("/api/ai-insights", ai_insights_Router);
 // app.use("/api", registered_users_router);
 
 app.use((err, req, res, next) => {
