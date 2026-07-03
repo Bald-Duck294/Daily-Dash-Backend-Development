@@ -212,6 +212,8 @@ export async function getAiInsightsContext(req, res) {
         tasks: true,
         initial_comment: true,
         final_comment: true,
+        before_photo:true,
+        after_photo:true,
         location: {
           select: {
             id: true,
