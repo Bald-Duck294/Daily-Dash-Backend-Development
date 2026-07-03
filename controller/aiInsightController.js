@@ -280,6 +280,8 @@ export async function getAiInsightsContext(req, res) {
           initial_comment: serializedReview.initial_comment,
           final_comment: serializedReview.final_comment,
         },
+        before_photo: serializedReview.before_photo || null, 
+          after_photo: serializedReview.after_photo || null,
         hygiene_ai: serializedReview.hygiene_score || null,
       };
     });
