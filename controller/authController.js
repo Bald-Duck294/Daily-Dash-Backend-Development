@@ -268,7 +268,7 @@
 import prisma from "../config/prismaClient.mjs";
 import bcrypt from "bcryptjs";
 import { generateToken } from "../utils/jwt.js";
-
+// import { serializeBigInt } from "../utils/serializeBigInt.js";
 export const registerUser = async (req, res) => {
   // ❌ Removed company_name from requirements
   const { name, email, phone, password, role_id, age, birthdate } = req.body;
@@ -382,51 +382,156 @@ const serializeData = (obj) => {
 
   return obj;
 };
+// export const loginUser = async (req, res) => {
+//   const { phone, password } = req.body;
+//   if (!phone || !password)
+//     return res.status(400).json({ error: "Phone and password required." });
+
+//   try {
+//     // ✅ ADD `companies: true` TO INCLUDE
+//     const user = await prisma.users.findUnique({
+//       where: { phone },
+//       include: { role: true, companies: true }, // Use 'company: true' if your schema names it that way
+//     });
+
+//     if (!user || !user.password)
+//       return res.status(401).json({ error: "Invalid credentials." });
+
+//     const isMatch = await bcrypt.compare(password, user.password);
+//     if (!isMatch)
+//       return res.status(401).json({ error: "Invalid credentials." });
+
+//     validateAccess(user);
+
+//     const token = generateToken({
+//       id: user.id.toString(),
+//       email: user.email,
+//       company_id: user.company_id?.toString(),
+//       role_id: user.role_id,
+//       permissions: user.role.permissions,
+//     });
+
+//     await prisma.users.update({ where: { id: user.id }, data: { token } });
+
+//     const responsePayload = {
+//       status: "success",
+//       user: { ...user, token }, // No more sanitizeUser here
+//       company: user.companies || user.company,
+//     };
+//     res.json(serializeData(responsePayload));
+//   } catch (err) {
+//     res
+//       .status(err.statusCode || 500)
+//       .json({ error: err.message || "Login failed" });
+//   }
+// };
+
+// --- 2. GOOGLE LOGIN ---
+
 export const loginUser = async (req, res) => {
   const { phone, password } = req.body;
-  if (!phone || !password)
-    return res.status(400).json({ error: "Phone and password required." });
+
+  if (!phone || !password) {
+    return res
+      .status(400)
+      .json({ status: "error", message: "Phone and password are required." });
+  }
 
   try {
-    // ✅ ADD `companies: true` TO INCLUDE
     const user = await prisma.users.findUnique({
       where: { phone },
-      include: { role: true, companies: true }, // Use 'company: true' if your schema names it that way
+      include: {
+        role: { select: { id: true, name: true, permissions: true } },
+        companies: true,
+      },
     });
 
-    if (!user || !user.password)
-      return res.status(401).json({ error: "Invalid credentials." });
+    if (!user)
+      return res
+        .status(404)
+        .json({ status: "error", message: "User not found!" });
+
+    // STRICT DASHBOARD ACCESS CONTROL
+    const ALLOWED_DASHBOARD_ROLES = [1, 2, 3];
+    if (!ALLOWED_DASHBOARD_ROLES.includes(user.role_id)) {
+      return res.status(403).json({
+        status: "error",
+        message:
+          "Dashboard access is not available for your role. Please use the mobile app.",
+      });
+    }
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch)
-      return res.status(401).json({ error: "Invalid credentials." });
+      return res
+        .status(401)
+        .json({ status: "error", message: "Password does not match!" });
 
-    validateAccess(user);
+    if (!user.role || !Array.isArray(user.role.permissions)) {
+      return res
+        .status(500)
+        .json({ status: "error", message: "Invalid role configuration." });
+    }
 
     const token = generateToken({
       id: user.id.toString(),
       email: user.email,
-      company_id: user.company_id?.toString(),
       role_id: user.role_id,
+      company_id: user.company_id?.toString(),
       permissions: user.role.permissions,
     });
 
-    await prisma.users.update({ where: { id: user.id }, data: { token } });
+    await prisma.users.update({
+      where: { id: user.id },
+      data: { token: token },
+    });
+
+    // 🚀 NEW: CALCULATE ONBOARDING STATUS DIRECTLY IN LOGIN
+    let nextStep = "dashboard";
+
+    if (user.role_id === 2 && user.company_id) {
+      const locationCount = await prisma.locations.count({
+        where: { company_id: user.company_id, deleted_at: null },
+      });
+
+      const company = user.companies || {};
+      const hasWorkspace =
+        locationCount > 0 || Boolean(company.is_onboarding_completed);
+      const hasProfile =
+        company.name &&
+        company.name !== "Pending Setup" &&
+        company.onboarding_metadata;
+
+      if (!hasWorkspace) {
+        nextStep = !hasProfile ? "company" : "workspace";
+      }
+    }
 
     const responsePayload = {
-      status: "success",
-      user: { ...user, token }, // No more sanitizeUser here
-      company: user.companies || user.company,
+      id: user.id.toString(),
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      age: user.age,
+      role_id: user.role_id,
+      company_id: user.company_id?.toString(),
+      role: user.role,
+      company: user.companies,
+      token: token,
     };
-    res.json(serializeData(responsePayload));
+
+    res.json({
+      status: "success",
+      message: "Login successful",
+      user: serializeData(responsePayload),
+      nextStep: nextStep, // 👈 Send it to the frontend immediately!
+    });
   } catch (err) {
-    res
-      .status(err.statusCode || 500)
-      .json({ error: err.message || "Login failed" });
+    console.error("Login Error:", err);
+    res.status(500).json({ status: "error", message: "Login failed." });
   }
 };
 
-// --- 2. GOOGLE LOGIN ---
 export const googleLogin = async (req, res) => {
   const { idToken } = req.body;
   try {
@@ -593,5 +698,63 @@ export const resetPassword = async (req, res) => {
     res
       .status(500)
       .json({ error: "Failed to reset password. Please try again." });
+  }
+};
+
+export const getOnboardingStatus = async (req, res) => {
+  console.log("Fetching onboarding status for user:", req.user);
+  try {
+    const companyId = req.user.company_id;
+    if (!companyId) {
+      return res
+        .status(400)
+        .json({ message: "No company associated with this user." });
+    }
+
+    const company = await prisma.companies.findUnique({
+      where: { id: BigInt(companyId) },
+    });
+
+    if (!company) {
+      return res.status(404).json({ message: "Company not found." });
+    }
+    const locationCount = await prisma.locations.count({
+      where: {
+        company_id: BigInt(companyId),
+        deleted_at: null,
+      },
+    });
+
+    const hasWorkspace =
+      locationCount > 0 || Boolean(company.is_onboarding_completed); // Check if profile is complete (Name is set and not default, metadata exists)
+    const hasProfile =
+      company.name &&
+      company.name !== "Pending Setup" &&
+      company.onboarding_metadata;
+
+    // const isCompleted = company.is_onboarding_completed;
+
+    let nextStep = "dashboard";
+    // if (!isCompleted) {
+    //   if (!hasProfile) {
+    //     nextStep = "company";
+    //   } else {
+    //     nextStep = "workspace";
+    //   }
+    // }
+
+    if (!hasWorkspace) {
+      if (!hasProfile) nextStep = "company";
+      else nextStep = "workspace";
+    }
+    res.status(200).json({
+      companyProfileCompleted: Boolean(hasProfile),
+      workspaceExists: hasWorkspace,
+      isOnboardingCompleted: Boolean(company.is_onboarding_completed),
+      nextStep,
+    });
+  } catch (error) {
+    console.error("Error fetching onboarding status:", error);
+    res.status(500).json({ message: "Failed to fetch onboarding status" });
   }
 };
