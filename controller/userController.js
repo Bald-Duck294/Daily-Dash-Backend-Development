@@ -284,22 +284,25 @@ export async function getUser(req, res) {
       prisma.users.count({ where: whereClause }), // Same filter applied for accurate count
     ]);
 
-    const usersWithStringIds = users.map((user) => ({
-      ...user,
-      id: user.id.toString(),
-      company_id: user.company_id?.toString() || null,
-    }));
-
-    // Return object containing both data and metadata
-    res.json({
-      data: usersWithStringIds,
-      meta: {
-        totalCount,
-        totalPages: Math.ceil(totalCount / parsedLimit),
-        currentPage: parsedPage,
-        itemsPerPage: parsedLimit,
+    // Serialize the payload, automatically converting any nested BigInts to strings
+    const responsePayload = JSON.stringify(
+      {
+        data: users,
+        meta: {
+          // Coerce totalCount to Number just in case Prisma count() returns a BigInt
+          totalCount: Number(totalCount),
+          totalPages: Math.ceil(Number(totalCount) / parsedLimit),
+          currentPage: parsedPage,
+          itemsPerPage: parsedLimit,
+        },
       },
-    });
+      (key, value) => (typeof value === "bigint" ? value.toString() : value)
+    );
+
+    // Set the correct header and send the serialized JSON string directly
+    res.setHeader("Content-Type", "application/json");
+    res.status(200).send(responsePayload);
+    
   } catch (err) {
     console.error(err);
     res.status(500).send({ msg: "Error fetching users", err });
