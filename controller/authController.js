@@ -268,6 +268,9 @@
 import prisma from "../config/prismaClient.mjs";
 import bcrypt from "bcryptjs";
 import { generateToken } from "../utils/jwt.js";
+import redisClient from "../config/redis.js";
+import { randomInt } from "crypto";
+import jwt from "jsonwebtoken";
 // import { serializeBigInt } from "../utils/serializeBigInt.js";
 export const registerUser = async (req, res) => {
   // ❌ Removed company_name from requirements
@@ -595,6 +598,52 @@ export const googleLogin = async (req, res) => {
       .json({ error: err.message || "Google authentication failed" });
   }
 };
+const sendMsg91Otp = async (phone, otp) => {
+  const authKey = process.env.MSG91_AUTH_KEY;
+
+  // NOTE: MSG91 provides an alphanumeric Template ID in their dashboard.
+  // Do NOT confuse this with the numeric DLT Template ID in your screenshot.
+  const templateId = process.env.MSG91_TEMPLATE_ID;
+
+  // MSG91 strictly requires the 91 country code for Indian numbers
+  const mobileNumber = phone.length === 10 ? `91${phone}` : phone;
+
+  const options = {
+    method: "POST",
+    headers: {
+      authkey: authKey,
+      accept: "application/json",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      template_id: templateId,
+      short_url: "0",
+      recipients: [
+        {
+          mobiles: mobileNumber,
+          // Mapping directly to ##var## and ##var1## in your approved template
+          var: "Safai",
+          var1: otp,
+        },
+      ],
+    }),
+  };
+
+  const response = await fetch(
+    "https://control.msg91.com/api/v5/flow/",
+    options,
+  );
+  const data = await response.json();
+
+  if (data.type === "error") {
+    throw new Error(`MSG91 Error: ${data.message}`);
+  }
+
+  return data;
+};
+
+const MAX_ATTEMPTS = 5;
+
 export const requestOtp = async (req, res) => {
   const { phone } = req.body;
 
@@ -602,62 +651,123 @@ export const requestOtp = async (req, res) => {
     return res.status(400).json({ error: "Phone number is required." });
   }
 
-  // 1. Generate a random 6-digit OTP
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  // Cooldown key to prevent spamming SMS APIs
+  const cooldownKey = `cooldown:${phone}`;
+  const isCoolingDown = await redisClient.get(cooldownKey);
 
-  // 2. Set expiry (e.g., 10 minutes from now)
-  const expires_at = new Date(Date.now() + 10 * 60 * 1000);
+  if (isCoolingDown) {
+    return res
+      .status(429)
+      .json({ error: "Please wait 60 seconds before requesting a new OTP." });
+  }
+
+  const code = randomInt(100000, 1000000).toString();
 
   try {
-    // 3. Save or Update OTP in database
-    await prisma.otps.upsert({
-      where: { phone },
-      update: { code, expires_at },
-      create: { phone, code, expires_at },
-    });
+    const otpData = JSON.stringify({ code, attempts: 0 });
 
-    // 4. In a real app, you would send this via SMS (Twilio/Msg91)
-    console.log(`[DEBUG] OTP for ${phone} is: ${code}`);
+    // Store OTP in Upstash for 10 minutes (600 seconds)
+    await redisClient.setEx(`otp:${phone}`, 600, otpData);
+
+    // Lock the phone number for 60 seconds
+    await redisClient.setEx(cooldownKey, 60, "locked");
+
+    // 🔥 CALL MSG91 API
+    await sendMsg91Otp(phone, code);
 
     res.json({ status: "success", message: "OTP sent successfully." });
   } catch (err) {
     console.error("OTP Request Error:", err);
-    res.status(500).json({ error: "Failed to generate OTP." });
+
+    // Optional: If MSG91 fails, delete the Redis cooldown lock so the user can try again immediately
+    await redisClient.del(`cooldown:${phone}`);
+    await redisClient.del(`otp:${phone}`);
+
+    res
+      .status(500)
+      .json({ error: "Failed to send OTP SMS. Please try again." });
   }
 };
 
-// --- 3. OTP LOGIN ---
+// ==========================================
+// 2. VERIFY OTP & STATELESS LOGIN
+// ==========================================
 export const verifyOtp = async (req, res) => {
   const { phone, code } = req.body;
-  const otpRecord = await prisma.otps.findUnique({ where: { phone } });
 
-  if (
-    !otpRecord ||
-    otpRecord.code !== code ||
-    new Date() > otpRecord.expires_at
-  ) {
-    return res.status(400).json({ error: "Invalid or expired OTP" });
+  if (!phone || !code) {
+    return res.status(400).json({ error: "Phone and OTP code are required." });
   }
 
-  let user = await prisma.users.findUnique({
-    where: { phone },
-    include: { role: true },
-  });
+  try {
+    const rawData = await redisClient.get(`otp:${phone}`);
 
-  if (!user) {
-    user = await prisma.users.create({
-      data: { phone, role_id: 2 },
+    if (!rawData) {
+      return res.status(400).json({ error: "OTP expired or does not exist." });
+    }
+
+    const otpData = JSON.parse(rawData);
+
+    // Brute-force protection
+    if (otpData.attempts >= MAX_ATTEMPTS) {
+      await redisClient.del(`otp:${phone}`);
+      return res
+        .status(429)
+        .json({ error: "Too many failed attempts. Request a new OTP." });
+    }
+
+    // Validate the OTP code
+    if (otpData.code !== code) {
+      otpData.attempts += 1;
+      const ttl = await redisClient.ttl(`otp:${phone}`);
+      if (ttl > 0) {
+        await redisClient.setEx(`otp:${phone}`, ttl, JSON.stringify(otpData));
+      }
+      return res
+        .status(400)
+        .json({
+          error: `Invalid OTP. You have ${MAX_ATTEMPTS - otpData.attempts} attempts left.`,
+        });
+    }
+
+    // Success: Delete the OTP key immediately so it cannot be reused
+    await redisClient.del(`otp:${phone}`);
+
+    // Database check/create
+    let user = await prisma.users.findUnique({
+      where: { phone },
       include: { role: true },
     });
-  }
 
-  validateAccess(user);
-  const token = generateToken({
-    id: user.id.toString(),
-    role_id: user.role_id,
-    permissions: user.role.permissions,
-  });
-  res.json({ status: "success", user: { ...user, token } });
+    if (!user) {
+      user = await prisma.users.create({
+        data: { phone, role_id: 2 },
+        include: { role: true },
+      });
+    }
+
+    // 1. Use your existing generateToken helper! (This fixes the JWT_SECRETS typo automatically)
+    const token = generateToken({
+      id: user.id.toString(),
+      email: user.email,
+      company_id: user.company_id?.toString(),
+      role_id: user.role_id,
+      permissions: user.role?.permissions,
+    });
+
+    // 2. Build the payload
+    const responsePayload = {
+      status: "success",
+      message: "Logged in successfully",
+      user: { ...user, token },
+    };
+
+    // 3. Run it through your awesome serializeData function to kill all nested BigInts!
+    res.json(serializeData(responsePayload));
+  } catch (err) {
+    console.error("OTP Verification Error:", err);
+    res.status(500).json({ error: "Failed to verify OTP." });
+  }
 };
 
 export const resetPassword = async (req, res) => {
