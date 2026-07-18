@@ -6,29 +6,39 @@ import {
 import { serializeBigInt } from "../utils/serializer.js";
 
 export const getAllCompanies = async (req, res) => {
-  // 1. Parse query parameters with fallbacks
   const page = parseInt(req.query.page, 10) || 1;
-  const limit = parseInt(req.query.limit, 10) || 6;
-
-  // 2. Calculate how many records to skip
+  const limit = parseInt(req.query.limit, 10) || 10;
+  const search = req.query.search || ""; 
   const skip = (page - 1) * limit;
 
-  try {
-    // 3. Fetch ONLY the requested page of data
-    const companies = await prisma.companies.findMany({
-      skip: skip,
-      take: limit,
-      orderBy: {
-        created_at: "desc",
-      },
-    });
+  // ✅ 1. Build the search filter
+  const whereClause = search
+    ? {
+        OR: [
+          { name: { contains: search, mode: "insensitive" } },
+          { contact_email: { contains: search, mode: "insensitive" } },
+        ],
+      }
+    : {};
 
-    // 4. Return the data and basic local pagination info
+  try {
+    // ✅ 2. Pass the whereClause to BOTH findMany and count
+    const [companies, totalCount] = await prisma.$transaction([
+      prisma.companies.findMany({
+        where: whereClause,
+        skip: skip,
+        take: limit,
+        orderBy: { created_at: "desc" },
+      }),
+      prisma.companies.count({ where: whereClause }), // Count only filtered results
+    ]);
+
     res.status(200).json({
-      data: serializeBigInt(companies), // Retaining your BigInt serializer
+      data: serializeBigInt(companies), 
       pagination: {
         currentPage: page,
         itemsPerPage: limit,
+        totalCount: totalCount, // ✅ 3. Return the new filtered count here
       },
     });
   } catch (error) {
