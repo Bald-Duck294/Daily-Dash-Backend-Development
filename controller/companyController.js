@@ -167,65 +167,64 @@ export const updateCompany = async (req, res) => {
 // @desc    Delete a company
 // @route   DELETE /api/companies/:id
 // @access  Public
+
+
 export const deleteCompany = async (req, res) => {
   console.log('delete company endpoint hit');
   try {
     const { id } = req.params;
     const companyId = BigInt(id);
     console.log(companyId, "companyId");
-    // Delete company and all dependencies in a transaction
-    // This is required because some relations have onDelete: NoAction
-    await prisma.$transaction(
-      async (tx) => {
-        const targetIds = [companyId];
+    const targetIds = [companyId];
 
-        // 1. Delete Dependent Review/Log Records
-        await tx.cleaner_review.deleteMany({ where: { company_id: { in: targetIds } } });
-        await tx.user_review.deleteMany({ where: { company_id: { in: targetIds } } });
-        await tx.activity_logs.deleteMany({ where: { users: { company_id: { in: targetIds } } } });
+    // Step 1: Fetch ALL user IDs (including admins) for this company
+    const usersToDelete = await prisma.users.findMany({
+      where: { company_id: { in: targetIds } },
+      select: { id: true },
+    });
+    const userIds = usersToDelete.map((u) => u.id);
 
-        // 2. Delete Assignments
-        await tx.cleaner_assignments.deleteMany({ where: { company_id: { in: targetIds } } });
-        await tx.shift_assignments.deleteMany({ where: { user: { company_id: { in: targetIds } } } });
+    // Step 2: Delete all leaf-level dependent records in parallel
+    await Promise.all([
+      prisma.cleaner_review.deleteMany({ where: { company_id: { in: targetIds } } }),
+      prisma.user_review.deleteMany({ where: { company_id: { in: targetIds } } }),
+      prisma.hygiene_scores.deleteMany({ where: { company_id: { in: targetIds } } }),
+      prisma.cleaner_assignments.deleteMany({ where: { company_id: { in: targetIds } } }),
+      ...(userIds.length > 0
+        ? [
+          prisma.activity_logs.deleteMany({ where: { user_id: { in: userIds } } }),
+          prisma.shift_assignments.deleteMany({ where: { user_id: { in: userIds } } }),
+          prisma.saved_locations.deleteMany({ where: { user_id: { in: userIds } } }),
+          prisma.sessions.deleteMany({ where: { user_id: { in: userIds } } }),
+          prisma.refresh_tokens.deleteMany({ where: { user_id: { in: userIds } } }),
+        ]
+        : []),
+    ]);
 
-        // 3. Delete Saved Locations
-        await tx.saved_locations.deleteMany({ where: { users: { company_id: { in: targetIds } } } });
+    // Step 3: Delete ALL users (now safe — all dependents are gone)
+    if (userIds.length > 0) {
+      await prisma.users.deleteMany({ where: { id: { in: userIds } } });
+    }
 
-        // 4. Delete Hygiene Scores
-        await tx.hygiene_scores.deleteMany({ where: { company_id: { in: targetIds } } });
+    // Step 4: Nullify location FKs, then delete locations
+    await prisma.locations.updateMany({
+      where: { company_id: { in: targetIds } },
+      data: { parent_id: null, type_id: null },
+    });
+    await prisma.locations.deleteMany({ where: { company_id: { in: targetIds } } });
 
-        // 5. Cleanup All User Tokens & Sessions
-        await tx.sessions.deleteMany({ where: { users: { company_id: { in: targetIds } } } });
-        await tx.refresh_tokens.deleteMany({ where: { users: { company_id: { in: targetIds } } } });
+    // Step 5: Nullify location_type parent FKs, then delete location types
+    await prisma.location_types.updateMany({
+      where: { company_id: { in: targetIds } },
+      data: { parent_id: null },
+    });
+    await prisma.location_types.deleteMany({ where: { company_id: { in: targetIds } } });
 
-        // 6. Delete ALL Users (Including Admins)
-        await tx.users.deleteMany({ where: { company_id: { in: targetIds } } });
+    // Step 6: Delete System Limits
+    await prisma.system_limits.deleteMany({ where: { company_id: { in: targetIds } } });
 
-        // 7. Clear Foreign Keys and Delete Locations
-        await tx.locations.updateMany({
-          where: { company_id: { in: targetIds } },
-          data: { parent_id: null, type_id: null },
-        });
-        await tx.locations.deleteMany({ where: { company_id: { in: targetIds } } });
-
-        // 8. Clear Parent Keys and Delete Location Types
-        await tx.location_types.updateMany({
-          where: { company_id: { in: targetIds } },
-          data: { parent_id: null },
-        });
-        await tx.location_types.deleteMany({ where: { company_id: { in: targetIds } } });
-
-        // 9. System Limits
-        await tx.system_limits.deleteMany({ where: { company_id: { in: targetIds } } });
-
-        // 10. Finally Delete Company
-        await tx.companies.delete({ where: { id: companyId } });
-      },
-      {
-        maxWait: 10000,
-        timeout: 60000,
-      }
-    );
+    // Step 7: Finally Delete Company
+    await prisma.companies.delete({ where: { id: companyId } });
 
     res.status(200).json({ success: true, message: "Company deleted successfully." });
   } catch (error) {
