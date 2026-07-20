@@ -24,6 +24,7 @@ companyRouter.get("/count", companyController.getCompaniesCount);
 // DELETE /api/companies/:id
 
 companyRouter.post("/setup", verifyToken, companyController.setupCompany);
+companyRouter.post("/reset", verifyToken, companyController.companyReset);
 companyRouter
   .route("/:id")
   .get(companyController.getCompanyById)

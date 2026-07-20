@@ -1,4 +1,5 @@
 import prisma from "../config/prismaClient.mjs";
+import clen_assign_router from "../routes/clen_assignRoutes.js";
 import {
   parsePaginationParams,
   paginateWithPrisma,
@@ -9,40 +10,74 @@ export const getAllCompanies = async (req, res) => {
   // 1. Parse query parameters with fallbacks
   const page = parseInt(req.query.page, 10) || 1;
   const limit = parseInt(req.query.limit, 10) || 6;
+  const search = req.query.search || "";
+  const sortField = req.query.sortField || "created_at";
+  const sortOrder = req.query.sortOrder || "desc";
 
-  // 2. Calculate how many records to skip
+  // 2. Whitelist allowed sort fields
+  const allowedSortFields = ["name", "contact_email", "status", "created_at"];
+  const safeSortField = allowedSortFields.includes(sortField) ? sortField : "created_at";
+  const safeSortOrder = sortOrder === "asc" ? "asc" : "desc";
+
+  // 3. Calculate how many records to skip
   const skip = (page - 1) * limit;
 
+  // 4. Build where clause for search
+  const whereClause = {
+    deleted_at: null,
+    ...(search && {
+      OR: [
+        { name: { contains: search, mode: 'insensitive' } },
+        { contact_email: { contains: search, mode: 'insensitive' } },
+      ]
+    })
+  };
+
   try {
-    // 3. Fetch ONLY the requested page of data
-    const companies = await prisma.companies.findMany({
-      skip: skip,
-      take: limit,
-      orderBy: {
-        created_at: "desc",
+    // 5. Fetch companies + count in parallel
+    const [companies, totalCount] = await Promise.all([
+      prisma.companies.findMany({
+        where: whereClause,
+        skip: skip,
+        take: limit,
+        orderBy: { [safeSortField]: safeSortOrder },
+      }),
+      prisma.companies.count({ where: whereClause }),
+    ]);
+
+    // 6. Return data with totalCount
+    res.status(200).json({
+      data: serializeBigInt(companies),
+      totalCount,
+      pagination: {
+        currentPage: page,
+        pageSize: limit,
       },
     });
 
-    // 4. Return the data and basic local pagination info
-    res.status(200).json({
-      data: serializeBigInt(companies), // Retaining your BigInt serializer
-      pagination: {
-        currentPage: page,
-        itemsPerPage: limit,
-      },
-    });
   } catch (error) {
     console.error("Error fetching companies:", error);
     res.status(500).json({ message: "Failed to fetch companies" });
   }
 };
 
+
 export const getCompaniesCount = async (req, res) => {
+  const search = req.query.search || "";
+
+  const whereClause = {
+    deleted_at: null,
+    ...(search && {
+      OR: [
+        { name: { contains: search, mode: 'insensitive' } },
+        { contact_email: { contains: search, mode: 'insensitive' } }
+      ]
+    })
+  };
+
   try {
     const totalCount = await prisma.companies.count({
-      where: {
-        deleted_at: null,
-      },
+      where: whereClause,
     });
 
     res.status(200).json({ totalCount, success: true });
@@ -134,13 +169,66 @@ export const updateCompany = async (req, res) => {
 // @route   DELETE /api/companies/:id
 // @access  Public
 export const deleteCompany = async (req, res) => {
+  console.log('delete company endpoint hit');
   try {
     const { id } = req.params;
-    await prisma.companies.delete({
-      where: { id: parseInt(id) },
-    });
+    const companyId = BigInt(id);
+    console.log(companyId, "companyId");
+    // Delete company and all dependencies in a transaction
+    // This is required because some relations have onDelete: NoAction
+    await prisma.$transaction(
+      async (tx) => {
+        const targetIds = [companyId];
 
-    res.status(204).send(); // No Content
+        // 1. Delete Dependent Review/Log Records
+        await tx.cleaner_review.deleteMany({ where: { company_id: { in: targetIds } } });
+        await tx.user_review.deleteMany({ where: { company_id: { in: targetIds } } });
+        await tx.activity_logs.deleteMany({ where: { users: { company_id: { in: targetIds } } } });
+
+        // 2. Delete Assignments
+        await tx.cleaner_assignments.deleteMany({ where: { company_id: { in: targetIds } } });
+        await tx.shift_assignments.deleteMany({ where: { user: { company_id: { in: targetIds } } } });
+
+        // 3. Delete Saved Locations
+        await tx.saved_locations.deleteMany({ where: { users: { company_id: { in: targetIds } } } });
+
+        // 4. Delete Hygiene Scores
+        await tx.hygiene_scores.deleteMany({ where: { company_id: { in: targetIds } } });
+
+        // 5. Cleanup All User Tokens & Sessions
+        await tx.sessions.deleteMany({ where: { users: { company_id: { in: targetIds } } } });
+        await tx.refresh_tokens.deleteMany({ where: { users: { company_id: { in: targetIds } } } });
+
+        // 6. Delete ALL Users (Including Admins)
+        await tx.users.deleteMany({ where: { company_id: { in: targetIds } } });
+
+        // 7. Clear Foreign Keys and Delete Locations
+        await tx.locations.updateMany({
+          where: { company_id: { in: targetIds } },
+          data: { parent_id: null, type_id: null },
+        });
+        await tx.locations.deleteMany({ where: { company_id: { in: targetIds } } });
+
+        // 8. Clear Parent Keys and Delete Location Types
+        await tx.location_types.updateMany({
+          where: { company_id: { in: targetIds } },
+          data: { parent_id: null },
+        });
+        await tx.location_types.deleteMany({ where: { company_id: { in: targetIds } } });
+
+        // 9. System Limits
+        await tx.system_limits.deleteMany({ where: { company_id: { in: targetIds } } });
+
+        // 10. Finally Delete Company
+        await tx.companies.delete({ where: { id: companyId } });
+      },
+      {
+        maxWait: 10000,
+        timeout: 60000,
+      }
+    );
+
+    res.status(200).json({ success: true, message: "Company deleted successfully." });
   } catch (error) {
     console.error("Error deleting company:", error);
     if (error.code === "P2025") {
@@ -213,3 +301,89 @@ export const setupCompany = async (req, res) => {
 
 // controllers/companyController.js
 
+export const companyReset = async (req, res) => {
+  console.log("Company Reset Started");
+  try {
+    const { companyId, companyIds } = req.body;
+
+    let targetIds = [];
+    if (companyIds && Array.isArray(companyIds)) {
+      targetIds = companyIds.map((id) => BigInt(id));
+    } else if (companyId) {
+      targetIds = [BigInt(companyId)];
+    }
+
+    if (targetIds.length === 0) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Please provide companyId or companyIds in the request body." });
+    }
+
+    // Step 1: Fetch non-admin user IDs (outside transaction for speed)
+    const usersToDelete = await prisma.users.findMany({
+      where: { company_id: { in: targetIds }, role_id: { not: 2 } },
+      select: { id: true },
+    });
+    const userIds = usersToDelete.map((u) => u.id);
+
+    // Step 2: Delete all leaf-level dependent records in parallel (no FK conflicts between these)
+    await Promise.all([
+      prisma.cleaner_review.deleteMany({ where: { company_id: { in: targetIds } } }),
+      prisma.user_review.deleteMany({ where: { company_id: { in: targetIds } } }),
+      prisma.hygiene_scores.deleteMany({ where: { company_id: { in: targetIds } } }),
+      prisma.cleaner_assignments.deleteMany({ where: { company_id: { in: targetIds } } }),
+      ...(userIds.length > 0
+        ? [
+          prisma.activity_logs.deleteMany({ where: { user_id: { in: userIds } } }),
+          prisma.shift_assignments.deleteMany({ where: { user_id: { in: userIds } } }),
+          prisma.saved_locations.deleteMany({ where: { user_id: { in: userIds } } }),
+          prisma.sessions.deleteMany({ where: { user_id: { in: userIds } } }),
+          prisma.refresh_tokens.deleteMany({ where: { user_id: { in: userIds } } }),
+        ]
+        : []),
+    ]);
+
+    // Step 3: Delete non-admin users (now safe — all dependents are gone)
+    if (userIds.length > 0) {
+      await prisma.users.deleteMany({ where: { id: { in: userIds } } });
+    }
+
+    // Step 4: Nullify location FKs, then delete locations
+    await prisma.locations.updateMany({
+      where: { company_id: { in: targetIds } },
+      data: { parent_id: null, type_id: null },
+    });
+    await prisma.locations.deleteMany({ where: { company_id: { in: targetIds } } });
+
+    // Step 5: Nullify location_type parent FKs, then delete location types
+    await prisma.location_types.updateMany({
+      where: { company_id: { in: targetIds } },
+      data: { parent_id: null },
+    });
+    await prisma.location_types.deleteMany({ where: { company_id: { in: targetIds } } });
+
+    // Step 6: Reset system limits and company status in parallel
+    await Promise.all([
+      prisma.system_limits.updateMany({
+        where: { company_id: { in: targetIds } },
+        data: { current_value: 0 },
+      }),
+      prisma.companies.updateMany({
+        where: { id: { in: targetIds } },
+        data: { is_onboarding_completed: false },
+      }),
+    ]);
+
+    console.log("Company Reset Completed Successfully");
+    res
+      .status(200)
+      .json({ success: true, message: "Companies reset successfully." });
+  } catch (error) {
+    console.error("Company Reset Error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Reset failed.",
+      details: error.message,
+    });
+  }
+};
