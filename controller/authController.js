@@ -692,8 +692,10 @@ export const requestOtp = async (req, res) => {
 // ==========================================
 // 2. VERIFY OTP & STATELESS LOGIN
 // ==========================================
+
 export const verifyOtp = async (req, res) => {
-  const { phone, code } = req.body;
+  // 1. Add 'intent' to the destructured body (e.g., intent = 'login' or 'register')
+  const { phone, code, intent = 'login' } = req.body;
 
   if (!phone || !code) {
     return res.status(400).json({ error: "Phone and OTP code are required." });
@@ -711,9 +713,7 @@ export const verifyOtp = async (req, res) => {
     // Brute-force protection
     if (otpData.attempts >= MAX_ATTEMPTS) {
       await redisClient.del(`otp:${phone}`);
-      return res
-        .status(429)
-        .json({ error: "Too many failed attempts. Request a new OTP." });
+      return res.status(429).json({ error: "Too many failed attempts. Request a new OTP." });
     }
 
     // Validate the OTP code
@@ -723,17 +723,23 @@ export const verifyOtp = async (req, res) => {
       if (ttl > 0) {
         await redisClient.setEx(`otp:${phone}`, ttl, JSON.stringify(otpData));
       }
-      return res
-        .status(400)
-        .json({
-          error: `Invalid OTP. You have ${MAX_ATTEMPTS - otpData.attempts} attempts left.`,
-        });
+      return res.status(400).json({
+        error: `Invalid OTP. You have ${MAX_ATTEMPTS - otpData.attempts} attempts left.`,
+      });
     }
 
-    // Success: Delete the OTP key immediately so it cannot be reused
+    // Success: Delete the OTP key immediately
     await redisClient.del(`otp:${phone}`);
 
-    // Database check/create
+    // 🔥 2. NEW LOGIC: If they are just verifying for registration, stop here and return success.
+    if (intent === 'register') {
+      return res.json({ 
+        status: "success", 
+        message: "OTP verified. Proceed to account creation." 
+      });
+    }
+
+    // 🔥 3. ORIGINAL LOGIC: Proceed with DB checks and JWT generation for Login
     let user = await prisma.users.findUnique({
       where: { phone },
       include: { role: true },
@@ -746,7 +752,6 @@ export const verifyOtp = async (req, res) => {
       });
     }
 
-    // 1. Use your existing generateToken helper! (This fixes the JWT_SECRETS typo automatically)
     const token = generateToken({
       id: user.id.toString(),
       email: user.email,
@@ -755,20 +760,98 @@ export const verifyOtp = async (req, res) => {
       permissions: user.role?.permissions,
     });
 
-    // 2. Build the payload
     const responsePayload = {
       status: "success",
       message: "Logged in successfully",
       user: { ...user, token },
     };
 
-    // 3. Run it through your awesome serializeData function to kill all nested BigInts!
     res.json(serializeData(responsePayload));
   } catch (err) {
     console.error("OTP Verification Error:", err);
     res.status(500).json({ error: "Failed to verify OTP." });
   }
 };
+
+// export const verifyOtp = async (req, res) => {
+//   const { phone, code } = req.body;
+
+//   if (!phone || !code) {
+//     return res.status(400).json({ error: "Phone and OTP code are required." });
+//   }
+
+//   try {
+//     const rawData = await redisClient.get(`otp:${phone}`);
+
+//     if (!rawData) {
+//       return res.status(400).json({ error: "OTP expired or does not exist." });
+//     }
+
+//     const otpData = JSON.parse(rawData);
+
+//     // Brute-force protection
+//     if (otpData.attempts >= MAX_ATTEMPTS) {
+//       await redisClient.del(`otp:${phone}`);
+//       return res
+//         .status(429)
+//         .json({ error: "Too many failed attempts. Request a new OTP." });
+//     }
+
+//     // Validate the OTP code
+//     if (otpData.code !== code) {
+//       otpData.attempts += 1;
+//       const ttl = await redisClient.ttl(`otp:${phone}`);
+//       if (ttl > 0) {
+//         await redisClient.setEx(`otp:${phone}`, ttl, JSON.stringify(otpData));
+//       }
+//       return res
+//         .status(400)
+//         .json({
+//           error: `Invalid OTP. You have ${MAX_ATTEMPTS - otpData.attempts} attempts left.`,
+//         });
+//     }
+
+//     // Success: Delete the OTP key immediately so it cannot be reused
+//     await redisClient.del(`otp:${phone}`);
+
+//     // Database check/create
+//     let user = await prisma.users.findUnique({
+//       where: { phone },
+//       include: { role: true },
+//     });
+
+//     if (!user) {
+//       user = await prisma.users.create({
+//         data: { phone, role_id: 2 },
+//         include: { role: true },
+//       });
+//     }
+
+//     // 1. Use your existing generateToken helper! (This fixes the JWT_SECRETS typo automatically)
+//     const token = generateToken({
+//       id: user.id.toString(),
+//       email: user.email,
+//       company_id: user.company_id?.toString(),
+//       role_id: user.role_id,
+//       permissions: user.role?.permissions,
+//     });
+
+//     // 2. Build the payload
+//     const responsePayload = {
+//       status: "success",
+//       message: "Logged in successfully",
+//       user: { ...user, token },
+//     };
+
+//     // 3. Run it through your awesome serializeData function to kill all nested BigInts!
+//     res.json(serializeData(responsePayload));
+//   } catch (err) {
+//     console.error("OTP Verification Error:", err);
+//     res.status(500).json({ error: "Failed to verify OTP." });
+//   }
+// };
+
+
 
 export const resetPassword = async (req, res) => {
   const { phone, newPassword } = req.body;

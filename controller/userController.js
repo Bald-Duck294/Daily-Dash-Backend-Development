@@ -251,7 +251,8 @@ export async function getclientUser(req, res) {
 
 export async function getUser(req, res) {
   try {
-    const { companyId, roleId, page = 1, limit = 10 } = req.query;
+    // 1. Extract 'search' from the query parameters
+    const { companyId, roleId, page = 1, limit = 10, search } = req.query;
     const parsedPage = parseInt(page, 10);
     const parsedLimit = parseInt(limit, 10);
     const skip = (parsedPage - 1) * parsedLimit;
@@ -266,14 +267,34 @@ export async function getUser(req, res) {
     if (companyId) whereClause.company_id = BigInt(companyId);
     if (roleId) whereClause.role_id = Number(roleId);
 
+    // 2. Add the search logic
+    if (search) {
+      whereClause.OR = [
+        { name: { contains: search, mode: "insensitive" } },
+        { email: { contains: search, mode: "insensitive" } },
+        { phone: { contains: search, mode: "insensitive" } },
+      ];
+    }
+
     // Run both queries in one transaction
     const [users, totalCount] = await prisma.$transaction([
       prisma.users.findMany({
         where: whereClause,
         skip: skip,
         take: parsedLimit,
-        include: {
-          role: true,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          company_id: true,
+          companies: { 
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          role: true, 
           cleaner_assignments_as_cleaner: {
             where: { deleted_at: null },
             select: { name: true, locations: { select: { name: true } } },
@@ -281,15 +302,13 @@ export async function getUser(req, res) {
         },
         orderBy: { id: "desc" },
       }),
-      prisma.users.count({ where: whereClause }), // Same filter applied for accurate count
+      prisma.users.count({ where: whereClause }),
     ]);
 
-    // Serialize the payload, automatically converting any nested BigInts to strings
     const responsePayload = JSON.stringify(
       {
         data: users,
         meta: {
-          // Coerce totalCount to Number just in case Prisma count() returns a BigInt
           totalCount: Number(totalCount),
           totalPages: Math.ceil(Number(totalCount) / parsedLimit),
           currentPage: parsedPage,
@@ -299,7 +318,6 @@ export async function getUser(req, res) {
       (key, value) => (typeof value === "bigint" ? value.toString() : value)
     );
 
-    // Set the correct header and send the serialized JSON string directly
     res.setHeader("Content-Type", "application/json");
     res.status(200).send(responsePayload);
     
