@@ -693,6 +693,8 @@ export const requestOtp = async (req, res) => {
 // 2. VERIFY OTP & STATELESS LOGIN
 // ==========================================
 
+
+
 export const verifyOtp = async (req, res) => {
   // 1. Add 'intent' to the destructured body (e.g., intent = 'login' or 'register')
   const { phone, code, intent = 'login' } = req.body;
@@ -729,13 +731,17 @@ export const verifyOtp = async (req, res) => {
     }
 
     // Success: Delete the OTP key immediately
-    await redisClient.del(`otp:${phone}`);
+    const deletedCount = await redisClient.del(`otp:${phone}`);
+
+    if (deletedCount === 0) {
+      return res.status(400).json({ error: "OTP has already been verified." });
+    }
 
     // 🔥 2. NEW LOGIC: If they are just verifying for registration, stop here and return success.
     if (intent === 'register') {
-      return res.json({ 
-        status: "success", 
-        message: "OTP verified. Proceed to account creation." 
+      return res.json({
+        status: "success",
+        message: "OTP verified. Proceed to account creation."
       });
     }
 
@@ -746,10 +752,19 @@ export const verifyOtp = async (req, res) => {
     });
 
     if (!user) {
-      user = await prisma.users.create({
-        data: { phone, role_id: 2 },
-        include: { role: true },
-      });
+      try {
+        user = await prisma.users.create({
+          data: { phone, role_id: 2 },
+          include: { role: true },
+        });
+      } catch (err) {
+        if (err.code === 'P2002') {
+          return res.status(400).json({
+            error: "This phone number might belong to a deactivated account. Please contact support."
+          });
+        }
+        throw err;
+      }
     }
 
     const token = generateToken({
@@ -772,6 +787,8 @@ export const verifyOtp = async (req, res) => {
     res.status(500).json({ error: "Failed to verify OTP." });
   }
 };
+
+
 
 // export const verifyOtp = async (req, res) => {
 //   const { phone, code } = req.body;

@@ -152,7 +152,7 @@ model sessions {
 
 model users {
   id                                BigInt                @id @default(autoincrement())
-  name                              String                @db.VarChar(255)
+  name                              String?               @db.VarChar(255)
   email                             String?               @unique @db.VarChar(255)
   password                          String?
   company_id                        BigInt?
@@ -169,6 +169,8 @@ model users {
   google_id                         String?               @unique
   facility_company_id               BigInt?
   created_by                        BigInt?
+  otp                               String?
+  otp_expires_at                    DateTime?             @db.Timestamp(6)
   activity_logs                     activity_logs[]
   cleaner_assignments_as_cleaner    cleaner_assignments[] @relation("CleanerUser")
   cleaner_assignments_as_supervisor cleaner_assignments[] @relation("Supervisor")
