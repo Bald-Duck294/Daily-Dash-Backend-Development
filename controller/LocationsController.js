@@ -2320,46 +2320,50 @@ export const getNearbyLocations = async (req, res) => {
 };
 
 export const getZonesWithToilets = async (req, res) => {
-  console.log("old zones");
+  console.log("new zones with toilets from location_types & locations");
   try {
-    // Fetch all zones (platforms or floors)
-    const ZONE_TYPE_IDS = [
-      BigInt(5),
-      BigInt(7),
-      BigInt(2),
-      BigInt(3),
-      BigInt(6),
-      BigInt(11),
-    ]; // Platform & Floor
+    const { company_id } = req.query;
+    const companyId = company_id || req.user?.company_id;
 
-    const zones = await prisma.locations.findMany({
-      where: {
-        type_id: { in: ZONE_TYPE_IDS },
+    const whereClause = {};
+    if (
+      companyId &&
+      companyId !== "all" &&
+      companyId !== "null" &&
+      companyId !== "undefined"
+    ) {
+      whereClause.company_id = BigInt(companyId);
+    }
+
+    // 1. Fetch hierarchy nodes (zones) from location_types
+    const zones = await prisma.location_types.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        name: true,
+        ui_type: true,
       },
+      orderBy: { name: "asc" },
+    });
+
+    if (!zones.length) return res.json([]);
+
+    const zoneIds = zones.map((z) => z.id);
+
+    // 2. Fetch physical washrooms from locations whose type_id points to these zone/hierarchy IDs
+    const toiletsWhere = {
+      type_id: { in: zoneIds },
+    };
+    if (whereClause.company_id) {
+      toiletsWhere.company_id = whereClause.company_id;
+    }
+
+    const toilets = await prisma.locations.findMany({
+      where: toiletsWhere,
       select: {
         id: true,
         name: true,
         type_id: true,
-      },
-    });
-
-    console.log(zones, "zones");
-
-    if (!zones.length) return res.json([]);
-
-    // Get toilets whose parent is in those zones
-    const zoneIds = zones.map((z) => z.id);
-    console.log(zoneIds, "zones ids");
-
-    const toilets = await prisma.locations.findMany({
-      where: {
-        type_id: BigInt(4), // Toilet
-        parent_id: { in: zoneIds },
-      },
-      select: {
-        id: true,
-        name: true,
-        parent_id: true,
         latitude: true,
         longitude: true,
         hygiene_scores: {
@@ -2370,18 +2374,11 @@ export const getZonesWithToilets = async (req, res) => {
       },
     });
 
-    console.log(toilets, "toilest ++ loc");
-    // Group toilets by their zone (parent_id)
+    // Group toilets by their hierarchy node (type_id)
     const toiletsByZone = {};
     toilets.forEach((toilet) => {
-      const zoneId = toilet.parent_id.toString();
+      const zoneId = toilet.type_id ? toilet.type_id.toString() : "";
       if (!toiletsByZone[zoneId]) toiletsByZone[zoneId] = [];
-
-      // toiletsByZone[zoneId].push({
-      //   id: toilet.id.toString(),
-      //   name: toilet.name,
-      //   image_url: toilet.hygiene_scores[0]?.image_url || null,
-      // });
 
       toiletsByZone[zoneId].push({
         id: toilet.id.toString(),
@@ -2392,11 +2389,12 @@ export const getZonesWithToilets = async (req, res) => {
       });
     });
 
-    // Attach toilets to zones
+    // Attach washrooms (toilets) to hierarchy nodes (zones)
     const result = zones.map((zone) => ({
       id: zone.id.toString(),
       name: zone.name,
-      type_id: zone.type_id.toString(),
+      type_id: zone.id.toString(),
+      ui_type: zone.ui_type || null,
       children: toiletsByZone[zone.id.toString()] || [],
     }));
 

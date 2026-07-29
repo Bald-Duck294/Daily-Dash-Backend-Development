@@ -1434,7 +1434,7 @@ export async function updateCleanerReviewScore(req, res) {
 
 export async function createDemoCleanerReview(req, res) {
   try {
-    const { company_id, name, location_id } = req.body;
+    const { company_id, name, location_id, cleaner_name, cleaner_phone } = req.body;
 
     // The user performing the demo (usually the Admin)
     const cleaner_user_id = req.user.id;
@@ -1454,7 +1454,7 @@ export async function createDemoCleanerReview(req, res) {
           "Clean and flush all urinals",
           "Empty and reline dustbins",
         ],
-        initial_comment: "Demo task started via App Preview",
+        initial_comment: `Demo task started via App Preview by ${cleaner_name || 'Admin'} (${cleaner_phone || ''})`,
         final_comment: "Demo task completed successfully",
 
         // Use placeholder images since we bypassed Multer

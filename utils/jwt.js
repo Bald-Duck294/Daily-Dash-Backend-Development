@@ -110,4 +110,23 @@ export const verifyTokenUtil = (token) => {
   }
 };
 
-export default { generateToken, verifyTokenUtil };
+export const generateRegistrationToken = (payload) => {
+  return jwt.sign(
+    { ...payload, purpose: "registration", verified: true },
+    JWT_SECRET,
+    { expiresIn: '5m' }
+  );
+};
+
+export const verifyRegistrationToken = (token) => {
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (decoded.purpose !== "registration") return null;
+    return decoded;
+  } catch (error) {
+    console.error('Registration token verification failed:', error.message);
+    return null;
+  }
+};
+
+export default { generateToken, verifyTokenUtil, generateRegistrationToken, verifyRegistrationToken };

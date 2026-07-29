@@ -274,11 +274,20 @@ import jwt from "jsonwebtoken";
 // import { serializeBigInt } from "../utils/serializeBigInt.js";
 export const registerUser = async (req, res) => {
   // ❌ Removed company_name from requirements
-  const { name, email, phone, password, role_id, age, birthdate } = req.body;
+  const { name, email, phone, password, role_id, age, birthdate, registrationToken } = req.body;
 
-  if (!phone || !password) {
+  if (!phone || !password || !registrationToken) {
     return res.status(400).json({
-      error: "Phone and Password fields are required.",
+      error: "Phone, Password and Registration Token are required.",
+    });
+  }
+
+  const { verifyRegistrationToken } = await import("../utils/jwt.js");
+  const decodedToken = verifyRegistrationToken(registrationToken);
+  
+  if (!decodedToken || decodedToken.phone !== phone) {
+    return res.status(401).json({
+      error: "Invalid or expired registration token. Please verify OTP again."
     });
   }
 
@@ -645,10 +654,22 @@ const sendMsg91Otp = async (phone, otp) => {
 const MAX_ATTEMPTS = 5;
 
 export const requestOtp = async (req, res) => {
-  const { phone } = req.body;
+  const { phone, intent } = req.body;
 
-  if (!phone) {
-    return res.status(400).json({ error: "Phone number is required." });
+  if (!phone || !intent) {
+    return res.status(400).json({ error: "Phone number and intent are required." });
+  }
+
+  if (intent === 'register') {
+    const existingUser = await prisma.users.findUnique({ where: { phone } });
+    if (existingUser) {
+      return res.status(409).json({ error: "Phone number already registered. Please login." });
+    }
+  } else if (intent === 'forgot') {
+    const existingUser = await prisma.users.findUnique({ where: { phone } });
+    if (!existingUser) {
+      return res.status(404).json({ error: "No account found with this phone number." });
+    }
   }
 
   // Cooldown key to prevent spamming SMS APIs
@@ -739,9 +760,22 @@ export const verifyOtp = async (req, res) => {
 
     // 🔥 2. NEW LOGIC: If they are just verifying for registration, stop here and return success.
     if (intent === 'register') {
+      const { generateRegistrationToken } = await import("../utils/jwt.js");
+      const registrationToken = generateRegistrationToken({ phone });
       return res.json({
         status: "success",
-        message: "OTP verified. Proceed to account creation."
+        message: "OTP verified. Proceed to account creation.",
+        registrationToken
+      });
+    }
+    
+    if (intent === 'forgot') {
+      const { generateRegistrationToken } = await import("../utils/jwt.js");
+      const registrationToken = generateRegistrationToken({ phone });
+      return res.json({
+        status: "success",
+        message: "OTP verified. Proceed to reset password.",
+        registrationToken
       });
     }
 

@@ -3138,7 +3138,7 @@ export const getAvailableZones = async (req, res) => {
       select: {
         id: true,
         name: true,
-        is_toilet: true,
+        ui_type: true,
       },
       orderBy: {
         name: "asc",
@@ -3148,7 +3148,7 @@ export const getAvailableZones = async (req, res) => {
     const serialized = zones.map((zone) => ({
       id: zone.id.toString(),
       name: zone.name,
-      is_toilet: zone.is_toilet,
+      ui_type: zone.ui_type,
     }));
 
     res.status(200).json({

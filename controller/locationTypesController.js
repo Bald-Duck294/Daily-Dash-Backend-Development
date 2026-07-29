@@ -61,7 +61,7 @@ export const createLocationType = async (req, res) => {
   }
 
   try {
-    const { name, parent_id, is_toilet } = req.body;
+    const { name, parent_id, ui_type } = req.body;
 
     // Validate required fields
     if (!name || name.trim() === '') {
@@ -75,7 +75,7 @@ export const createLocationType = async (req, res) => {
       data: {
         name: name.trim(),
         parent_id: parent_id ? BigInt(parent_id) : null,
-        is_toilet: Boolean(is_toilet),
+        ui_type: ui_type ? String(ui_type).toLowerCase() : null,
         company_id: BigInt(companyId),
       },
     });
@@ -127,7 +127,7 @@ export const createLocationType = async (req, res) => {
 export const updateLocationType = async (req, res) => {
   console.log("update location types");
   const { id } = req.params;
-  const { name, parent_id } = req.body;
+  const { name, parent_id, ui_type } = req.body;
 
   console.log(id, name, parent_id, "parent id");
 
@@ -137,6 +137,8 @@ export const updateLocationType = async (req, res) => {
     if (name !== undefined) data.name = name;
     if (parent_id !== undefined)
       data.parent_id = parent_id ? BigInt(parent_id) : null;
+    if (ui_type !== undefined)
+      data.ui_type = ui_type ? String(ui_type).toLowerCase() : null;
 
     const updated = await prisma.location_types.update({
       where: { id: BigInt(id) },
@@ -152,30 +154,6 @@ export const updateLocationType = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to update location type" });
-  }
-};
-
-// PATCH /api/location-types/:id/mark-toilet
-export const markAsToilet = async (req, res) => {
-  const { id } = req.params;
-
-  try {
-    const updated = await prisma.location_types.update({
-      where: { id: BigInt(id) },
-      data: {
-        is_toilet: true,
-      },
-    });
-
-    res.json({
-      ...updated,
-      id: updated.id.toString(),
-      parent_id: updated.parent_id?.toString() || null,
-      company_id: updated.company_id.toString(),
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Failed to mark as toilet" });
   }
 };
 

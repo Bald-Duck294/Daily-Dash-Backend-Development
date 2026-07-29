@@ -46,17 +46,6 @@ export async function getLocations(req, res) {
       whereClause.company_id = { in: [27n, 28n] }; 
     }
 
-    // ---------------------------------------------------------
-    // THE TOILET FILTER (Currently Disabled for Testing)
-    // ---------------------------------------------------------
-    // If you uncomment this block and Postman returns [], 
-    // it confirms that Company 27 has no locations in the DB 
-    // where the associated location_types.is_toilet is true.
-    //
-    // whereClause.location_types = {
-    //   is_toilet: true,
-    // };
-    // ---------------------------------------------------------
 
     const locations = await prisma.locations.findMany({
       where: whereClause,
