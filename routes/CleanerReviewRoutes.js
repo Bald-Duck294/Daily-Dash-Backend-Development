@@ -9,6 +9,7 @@ import {
   updateCleanerReviewScore,
   getCleanerReviews,
   createDemoCleanerReview,
+  updateSupervisorScore,
 } from "../controller/cleanerReviewController.js";
 // import { upload, processAndUploadImages } from "../middleware/imageUpload.js";
 import { upload, processAndUploadImages } from "../middlewares/imageUpload.js";
@@ -33,6 +34,7 @@ clean_review_Router.get(
   getCleanerReviewsByLocationId,
 );
 clean_review_Router.patch("/:id/score", verifyToken, updateCleanerReviewScore);
+clean_review_Router.put("/:id/supervisor-score", verifyToken, updateSupervisorScore);
 clean_review_Router.post(
   "/demo-completed",
   verifyToken,

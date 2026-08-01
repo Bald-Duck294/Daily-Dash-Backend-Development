@@ -221,6 +221,7 @@ model cleaner_review {
   score            Float?
   is_modified      Boolean         @default(false)
   original_score   Float?
+  score_update_count Int           @default(0)
   hygiene_score_id BigInt?
   cleaner_user     users?          @relation("CleanerReviews", fields: [cleaner_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   company          companies?      @relation("CompanyReviews", fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
