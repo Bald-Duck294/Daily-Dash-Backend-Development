@@ -4,6 +4,7 @@ import FormData from "form-data";
 import fs from "fs";
 import path from "path";
 import RBACFilterService from "../utils/rbacFilterService.js";
+import { getCompanySLAConfiguration } from "../services/slaConfigurationService.js";
 
 // =========================================================
 // 1️⃣ GET all cleaner reviews (with filters)
@@ -1665,3 +1666,113 @@ export async function getAiInsightsContext(req, res) {
     });
   }
 }
+
+export async function updateSupervisorScore(req, res) {
+  const { id } = req.params;
+  const { score } = req.body;
+  const user = req.user;
+
+  if (!user) {
+    return res.status(401).json({ success: false, message: "Unauthorized" });
+  }
+
+  // 1. RBAC Validation
+  if (Number(user.role_id) !== 1 && (!user.permissions || !user.permissions.includes("cleaner_reviews.manage"))) {
+    return res.status(403).json({ success: false, message: "Permission denied" });
+  }
+
+  if (score === undefined || score === null) {
+    return res.status(400).json({ success: false, message: "Score is required" });
+  }
+
+  const numericScore = parseFloat(score);
+  if (isNaN(numericScore) || numericScore < 0 || numericScore > 10) {
+    return res.status(400).json({ success: false, message: "Score must be between 0 and 10." });
+  }
+
+  try {
+    // 2. Fetch Review
+    const review = await prisma.cleaner_review.findUnique({
+      where: { id: BigInt(id) },
+    });
+
+    if (!review) {
+      return res.status(404).json({ success: false, message: "Cleaner review not found" });
+    }
+
+    // 3. Load SLA Config
+    const companyIdStr = review.company_id ? review.company_id.toString() : null;
+    if (!companyIdStr) {
+      return res.status(400).json({ success: false, message: "Review has no associated company." });
+    }
+    
+    const slaConfig = await getCompanySLAConfiguration(companyIdStr);
+    if (!slaConfig || !slaConfig.enabled) {
+      return res.status(400).json({ success: false, message: "SLA is not enabled for this company." });
+    }
+
+    // 4. Same-day Validation
+    const reviewDate = new Date(review.created_at);
+    const currentDate = new Date();
+    
+    if (
+      reviewDate.getFullYear() !== currentDate.getFullYear() ||
+      reviewDate.getMonth() !== currentDate.getMonth() ||
+      reviewDate.getDate() !== currentDate.getDate()
+    ) {
+      return res.status(400).json({ success: false, message: "This activity can only be updated on the day it was created." });
+    }
+
+    // 5. Update Limit Validation
+    const maxUpdates = slaConfig.configuration?.max_score_updates_per_activity ?? 1;
+    if (review.score_update_count >= maxUpdates) {
+      return res.status(400).json({ success: false, message: "Maximum score updates reached for this activity." });
+    }
+
+    // 6. Update logic
+    const updateData = {
+      score: numericScore,
+      is_modified: true,
+      score_update_count: review.score_update_count + 1,
+      updated_at: new Date()
+    };
+
+    if (review.original_score === null) {
+      updateData.original_score = review.score;
+    }
+
+    const updatedReview = await prisma.cleaner_review.update({
+      where: { id: BigInt(id) },
+      data: updateData
+    });
+
+    // Serialization helper function from the controller
+    const safeSerialize = (obj) => {
+      if (obj === null || obj === undefined) return obj;
+      if (typeof obj === "bigint") return obj.toString();
+      if (obj instanceof Date) return obj.toISOString();
+      if (typeof obj === "object" && typeof obj.toNumber === "function") return obj.toNumber();
+      if (obj.d && obj.e !== undefined && obj.s !== undefined) {
+        return parseFloat(`${obj.s < 0 ? '-' : ''}${obj.d.join('')}e${obj.e - obj.d.length + 1}`);
+      }
+      if (Array.isArray(obj)) return obj.map(safeSerialize);
+      if (typeof obj === "object") {
+        const serialized = {};
+        for (const [key, value] of Object.entries(obj)) serialized[key] = safeSerialize(value);
+        return serialized;
+      }
+      return obj;
+    };
+
+    return res.status(200).json({
+      success: true,
+      message: "Score updated successfully.",
+      data: safeSerialize(updatedReview)
+    });
+
+  } catch (err) {
+    console.error("Supervisor Score Update Error:", err);
+    return res.status(500).json({ success: false, message: "Failed to update score.", detail: err.message });
+  }
+}
+

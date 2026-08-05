@@ -19,7 +19,7 @@ export const deployWorkspace = async (req, res) => {
   try {
     const { hierarchy = [], washrooms = [], users = [] } = req.body;
     const companyId = req.user.company_id;
-
+    console.log(companyId, "company Ids");
     console.log(req.body, "body ");
     if (!companyId) {
       return res.status(400).json({
@@ -95,13 +95,22 @@ export const deployWorkspace = async (req, res) => {
     }
 
     // 5. Validate Users & Assignments
+    const phoneMap = new Map();
     for (const u of users) {
-      if (!u.phone) {
+      const cleanPhone = u.phone ? String(u.phone).trim().replace(/\D/g, "") : "";
+      if (!cleanPhone) {
         validationErrors.push(`User '${u.name}' is missing a phone number.`);
-      } else if (phoneSet.has(u.phone)) {
-        validationErrors.push(`Duplicate phone number detected: ${u.phone}`);
+      } else if (cleanPhone.length !== 10) {
+        validationErrors.push(
+          `User '${u.name}' has an invalid phone number '${u.phone}'. Phone number must be 10 digits.`,
+        );
+      } else if (phoneMap.has(cleanPhone)) {
+        const existingName = phoneMap.get(cleanPhone);
+        validationErrors.push(
+          `Duplicate phone number '${cleanPhone}' detected for users '${existingName}' and '${u.name}'. Each user must have a unique phone number.`,
+        );
       } else {
-        phoneSet.add(u.phone);
+        phoneMap.set(cleanPhone, u.name);
       }
 
       const assignedLocations =
@@ -120,7 +129,8 @@ export const deployWorkspace = async (req, res) => {
       return res.status(400).json({
         success: false,
         code: "VALIDATION_FAILED",
-        message: "Payload validation failed.",
+        step: "users",
+        message: validationErrors.join(" "),
         errors: validationErrors,
       });
     }
@@ -167,7 +177,7 @@ export const deployWorkspace = async (req, res) => {
         if (
           washroomLimit &&
           washroomLimit.current_value + washrooms.length >
-            washroomLimit.limit_value
+          washroomLimit.limit_value
         ) {
           throw new Error(`LIMIT_WASHROOMS:${washroomLimit.limit_value}`);
         }
@@ -180,7 +190,7 @@ export const deployWorkspace = async (req, res) => {
         if (
           cleanerLimit &&
           cleanerLimit.current_value + newCleanersCount >
-            cleanerLimit.limit_value
+          cleanerLimit.limit_value
         ) {
           throw new Error(`LIMIT_CLEANERS:${cleanerLimit.limit_value}`);
         }
@@ -200,6 +210,15 @@ export const deployWorkspace = async (req, res) => {
         // But since we are dropping everything for the company, we'll try a raw query or just deleteMany.
         // Actually, Prisma handles deleteMany correctly if there are no circular FK restrict rules.
         await tx.locations.deleteMany({
+          where: { company_id: BigInt(companyId) },
+        });
+
+        await tx.location_types.updateMany({
+          where: { company_id: BigInt(companyId) },
+          data: { parent_id: null },
+        });
+
+        await tx.location_types.deleteMany({
           where: { company_id: BigInt(companyId) },
         });
 
@@ -229,12 +248,11 @@ export const deployWorkspace = async (req, res) => {
           if (existing) {
             typeMap[typeName] = existing.id;
           } else {
-            const isToilet = typeName === "washroom";
             const newType = await tx.location_types.create({
               data: {
                 name: typeName.charAt(0).toUpperCase() + typeName.slice(1),
                 company_id: BigInt(companyId),
-                is_toilet: isToilet,
+                ui_type: typeName,
               },
             });
             typeMap[typeName] = newType.id;
@@ -392,12 +410,56 @@ export const deployWorkspace = async (req, res) => {
     console.error("Workspace Deployment Error:", error);
 
     if (error.code === "P2002") {
-      return res.status(422).json({
-        success: false,
-        code: "PHONE_ALREADY_EXISTS",
-        step: "users",
-        message: "One or more user phone numbers are already registered.",
-      });
+      const target = error.meta?.target || [];
+      const targetStr = Array.isArray(target)
+        ? target.join(",")
+        : String(target);
+
+      if (targetStr.includes("phone") || targetStr.includes("unique_phone")) {
+        try {
+          const userPhones = users
+            .map((u) =>
+              u.phone ? String(u.phone).trim().replace(/\D/g, "") : "",
+            )
+            .filter(Boolean);
+
+          const existingInDb = await prisma.users.findMany({
+            where: { phone: { in: userPhones } },
+            select: { phone: true, name: true },
+          });
+
+          if (existingInDb.length > 0) {
+            const conflictDetails = existingInDb
+              .map((dbUser) => {
+                const inputUser = users.find(
+                  (u) =>
+                    String(u.phone).trim().replace(/\D/g, "") === dbUser.phone,
+                );
+                return inputUser
+                  ? `'${dbUser.phone}' (${inputUser.name})`
+                  : `'${dbUser.phone}'`;
+              })
+              .join(", ");
+
+            return res.status(422).json({
+              success: false,
+              code: "PHONE_ALREADY_EXISTS",
+              step: "users",
+              message: `The following phone number(s) are already registered in the system: ${conflictDetails}. Please use unique phone numbers for each user.`,
+            });
+          }
+        } catch (dbErr) {
+          console.error("Failed to query conflicting phone numbers:", dbErr);
+        }
+
+        return res.status(422).json({
+          success: false,
+          code: "PHONE_ALREADY_EXISTS",
+          step: "users",
+          message:
+            "One or more user phone numbers are already registered in the system. Please ensure all phone numbers are unique.",
+        });
+      }
     }
 
     if (error.message.startsWith("LIMIT_")) {

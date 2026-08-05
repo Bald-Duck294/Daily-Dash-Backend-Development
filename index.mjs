@@ -32,7 +32,9 @@ import getattendanceRoute from "./routes/attendanceRoute.js";
 import systemLimitsRouter from "./routes/systemLimitsRoutes.js";
 import workspaceRouter from "./routes/workspaceRoutes.js";
 import ai_insights_Router from "./routes/aiInsightRoute.js";
+import slaConfigRoutes from "./routes/slaConfigRoutes.js";
 dotenv.config();
+
 
 // ✅ NAYA FIREBASE INITIALIZATION LOGIC (.env se read karega)
 const serviceAccount = {
@@ -46,7 +48,7 @@ const serviceAccount = {
   auth_uri: process.env.FIREBASE_AUTH_URI,
   token_uri: process.env.FIREBASE_TOKEN_URI,
   auth_provider_x509_cert_url: process.env.FIREBASE_AUTH_PROVIDER_CERT_URL,
-  client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL,
+  client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL, 
   universe_domain: process.env.FIREBASE_UNIVERSE_DOMAIN,
 };
 
@@ -128,6 +130,7 @@ app.use("/api/limits", systemLimitsRouter);
 app.use("/api/workspace", workspaceRouter);
 app.use("/uploads", express.static("uploads"));
 app.use("/api/ai-insights", ai_insights_Router);
+app.use("/api/sla-config", slaConfigRoutes);
 // app.use("/api", registered_users_router);
 
 app.use((err, req, res, next) => {

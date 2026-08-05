@@ -112,8 +112,8 @@ model location_types {
   sort_order           Int?
   created_at           DateTime?        @default(now()) @db.Timestamp(6)
   updated_at           DateTime?        @default(now()) @db.Timestamp(6)
-  ui_type              String?          @db.VarChar(50)
   deleted_at           DateTime?
+  ui_type              String?          @db.VarChar(50)
   companies            companies?       @relation(fields: [company_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   location_types       location_types?  @relation("location_typesTolocation_types", fields: [parent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   other_location_types location_types[] @relation("location_typesTolocation_types")
@@ -221,6 +221,7 @@ model cleaner_review {
   score            Float?
   is_modified      Boolean         @default(false)
   original_score   Float?
+  score_update_count Int           @default(0)
   hygiene_score_id BigInt?
   cleaner_user     users?          @relation("CleanerReviews", fields: [cleaner_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   company          companies?      @relation("CompanyReviews", fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
