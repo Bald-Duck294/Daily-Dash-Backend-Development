@@ -211,7 +211,38 @@ export const deployWorkspace = async (req, res) => {
         });
 
         // ==========================================
-        // 🏗️ STEP 2: ORGANIZATIONAL HIERARCHY (in location_types)
+        // 🏗️ STEP 2: DYNAMIC LOCATION TYPES
+        // ==========================================
+        const uniqueTypes = new Set(hierarchy.map((n) => n.type.toLowerCase()));
+        uniqueTypes.add("washroom");
+
+        const existingTypes = await tx.location_types.findMany({
+          where: { company_id: BigInt(companyId) },
+        });
+
+        const typeMap = {};
+
+        for (const typeName of uniqueTypes) {
+          const existing = existingTypes.find(
+            (t) => t.name.toLowerCase() === typeName,
+          );
+          if (existing) {
+            typeMap[typeName] = existing.id;
+          } else {
+            const isToilet = typeName === "washroom";
+            const newType = await tx.location_types.create({
+              data: {
+                name: typeName.charAt(0).toUpperCase() + typeName.slice(1),
+                company_id: BigInt(companyId),
+                is_toilet: isToilet,
+              },
+            });
+            typeMap[typeName] = newType.id;
+          }
+        }
+
+        // ==========================================
+        // 🗺️ STEP 3: HIERARCHY (Topological Sort)
         // ==========================================
         const idMap = {};
         const nodesToProcess = [...hierarchy];
@@ -227,15 +258,17 @@ export const deployWorkspace = async (req, res) => {
           }
 
           const node = nodesToProcess.splice(nodeIndex, 1)[0];
+          const resolvedTypeId = typeMap[node.type.toLowerCase()];
 
-          const createdNode = await tx.location_types.create({
+          const createdNode = await tx.locations.create({
             data: {
               name: node.name,
-              ui_type: node.type ? node.type.toLowerCase() : null,
+              type_id: resolvedTypeId,
               parent_id: node.parent_temp_id
                 ? BigInt(idMap[node.parent_temp_id])
                 : null,
               company_id: BigInt(companyId),
+              status: true,
             },
           });
 
@@ -244,14 +277,17 @@ export const deployWorkspace = async (req, res) => {
         }
 
         // ==========================================
-        // 🚻 STEP 3: PHYSICAL WASHROOMS (in locations)
+        // 🚻 STEP 4: WASHROOMS
         // ==========================================
+        const washroomTypeId = typeMap["washroom"];
+
         for (const w of washrooms) {
           const createdWashroom = await tx.locations.create({
             data: {
               name: w.name,
-              type_id: w.zone_temp_id ? BigInt(idMap[w.zone_temp_id]) : null,
-              parent_id: null,
+              type_id: washroomTypeId,
+              // Assigns to ANY node (zone, floor, building), not just zones!
+              parent_id: w.zone_temp_id ? BigInt(idMap[w.zone_temp_id]) : null,
               company_id: BigInt(companyId),
               status: true,
               options: {
@@ -400,16 +436,18 @@ export const getWorkspaceStatus = async (req, res) => {
       assignmentCount,
       lastAssignment,
     ] = await Promise.all([
-      // Count organizational hierarchy nodes
-      prisma.location_types.count({
-        where: {
-          company_id: BigInt(companyId),
-        },
-      }),
-      // Count physical washrooms
+      // Count locations that are NOT toilets
       prisma.locations.count({
         where: {
           company_id: BigInt(companyId),
+          location_types: { is_toilet: false },
+        },
+      }),
+      // Count locations that ARE toilets
+      prisma.locations.count({
+        where: {
+          company_id: BigInt(companyId),
+          location_types: { is_toilet: true },
         },
       }),
       // Count all users EXCEPT Admin (role_id 2)
