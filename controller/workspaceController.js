@@ -97,7 +97,9 @@ export const deployWorkspace = async (req, res) => {
     // 5. Validate Users & Assignments
     const phoneMap = new Map();
     for (const u of users) {
-      const cleanPhone = u.phone ? String(u.phone).trim().replace(/\D/g, "") : "";
+      const cleanPhone = u.phone
+        ? String(u.phone).trim().replace(/\D/g, "")
+        : "";
       if (!cleanPhone) {
         validationErrors.push(`User '${u.name}' is missing a phone number.`);
       } else if (cleanPhone.length !== 10) {
@@ -177,7 +179,7 @@ export const deployWorkspace = async (req, res) => {
         if (
           washroomLimit &&
           washroomLimit.current_value + washrooms.length >
-          washroomLimit.limit_value
+            washroomLimit.limit_value
         ) {
           throw new Error(`LIMIT_WASHROOMS:${washroomLimit.limit_value}`);
         }
@@ -190,7 +192,7 @@ export const deployWorkspace = async (req, res) => {
         if (
           cleanerLimit &&
           cleanerLimit.current_value + newCleanersCount >
-          cleanerLimit.limit_value
+            cleanerLimit.limit_value
         ) {
           throw new Error(`LIMIT_CLEANERS:${cleanerLimit.limit_value}`);
         }
@@ -248,11 +250,12 @@ export const deployWorkspace = async (req, res) => {
           if (existing) {
             typeMap[typeName] = existing.id;
           } else {
+            const isToilet = typeName === "washroom";
             const newType = await tx.location_types.create({
               data: {
                 name: typeName.charAt(0).toUpperCase() + typeName.slice(1),
                 company_id: BigInt(companyId),
-                ui_type: typeName,
+                is_toilet: isToilet,
               },
             });
             typeMap[typeName] = newType.id;
@@ -276,12 +279,11 @@ export const deployWorkspace = async (req, res) => {
           }
 
           const node = nodesToProcess.splice(nodeIndex, 1)[0];
-          const resolvedTypeId = typeMap[node.type.toLowerCase()];
 
           const createdNode = await tx.locations.create({
             data: {
               name: node.name,
-              type_id: resolvedTypeId,
+              ui_type: rawUiType ? String(rawUiType).toLowerCase() : null,
               parent_id: node.parent_temp_id
                 ? BigInt(idMap[node.parent_temp_id])
                 : null,
