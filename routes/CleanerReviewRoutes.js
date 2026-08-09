@@ -9,7 +9,7 @@ import {
   updateCleanerReviewScore,
   getCleanerReviews,
   createDemoCleanerReview,
-  updateSupervisorScore,
+  updateManagementScore,
 } from "../controller/cleanerReviewController.js";
 // import { upload, processAndUploadImages } from "../middleware/imageUpload.js";
 import { upload, processAndUploadImages } from "../middlewares/imageUpload.js";
@@ -34,7 +34,15 @@ clean_review_Router.get(
   getCleanerReviewsByLocationId,
 );
 clean_review_Router.patch("/:id/score", verifyToken, updateCleanerReviewScore);
-clean_review_Router.put("/:id/supervisor-score", verifyToken, updateSupervisorScore);
+clean_review_Router.put(
+  "/:id/management-score", 
+  verifyToken, 
+  upload.fields([{ name: "signature", maxCount: 1 }]),
+  processAndUploadImages([
+    { fieldName: "signature", folder: "signatures", maxCount: 1 },
+  ]),
+  updateManagementScore
+);
 clean_review_Router.post(
   "/demo-completed",
   verifyToken,

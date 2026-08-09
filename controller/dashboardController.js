@@ -4,7 +4,7 @@ import prisma from "../config/prismaClient.mjs";
 
 export const getDashboardCounts = async (req, res) => {
   try {
-    const { companyId, date } = req.query;
+    const { companyId, date, startDate, endDate } = req.query;
     const user = req.user;
 
     // Get role-based filters
@@ -12,10 +12,18 @@ export const getDashboardCounts = async (req, res) => {
     const userFilter = await RBACFilterService.getUserFilter(user);
 
     // Date range
-    const startOfDay = new Date(date || new Date());
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(startOfDay);
-    endOfDay.setHours(23, 59, 59, 999);
+    let startOfDay, endOfDay;
+    if (startDate && endDate) {
+      startOfDay = new Date(startDate);
+      startOfDay.setHours(0, 0, 0, 0);
+      endOfDay = new Date(endDate);
+      endOfDay.setHours(23, 59, 59, 999);
+    } else {
+      startOfDay = new Date(date || new Date());
+      startOfDay.setHours(0, 0, 0, 0);
+      endOfDay = new Date(startOfDay);
+      endOfDay.setHours(23, 59, 59, 999);
+    }
 
     // Build where clauses with RBAC
     const locationWhere = {
@@ -265,7 +273,7 @@ export const getWashroomScoresSummary = async (req, res) => {
 // };
 export const getWeeklyCleanerPerformance = async (req, res) => {
   try {
-    const { companyId } = req.query;
+    const { companyId, start_date, end_date, startDate, endDate } = req.query;
     const user = req.user;
 
     // RBAC filter
@@ -274,28 +282,53 @@ export const getWeeklyCleanerPerformance = async (req, res) => {
       "dashboard",
     );
 
-    // Generate last 7 days range
+    let startDateObj, endDateObj;
+    
+    const sDate = start_date || startDate;
+    const eDate = end_date || endDate;
+
+    if (sDate) {
+      startDateObj = new Date(sDate);
+      startDateObj.setHours(0, 0, 0, 0);
+      
+      endDateObj = new Date(eDate || new Date());
+      endDateObj.setHours(0, 0, 0, 0);
+
+      const diffTime = endDateObj - startDateObj;
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      
+      if (diffDays < 6) {
+        endDateObj = new Date(startDateObj);
+        endDateObj.setDate(startDateObj.getDate() + 6);
+      }
+    } else {
+      endDateObj = new Date();
+      endDateObj.setHours(0, 0, 0, 0);
+      startDateObj = new Date();
+      startDateObj.setDate(endDateObj.getDate() - 6);
+      startDateObj.setHours(0, 0, 0, 0);
+    }
+    
     const days = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      d.setHours(0, 0, 0, 0);
-      days.push(d);
+    let currentDate = new Date(startDateObj);
+    while (currentDate <= endDateObj) {
+      days.push(new Date(currentDate));
+      currentDate.setDate(currentDate.getDate() + 1);
     }
 
     let totalTasks = 0;
     let bestDayCount = -1;
     let bestDayName = "N/A";
 
-    // Query total tasks (all statuses) for the 7-day window to calculate completion rate
-    const sevenDaysAgo = new Date(days[0]);
-    const endOfToday = new Date(days[6]);
-    endOfToday.setHours(23, 59, 59, 999);
+    // Query total tasks (all statuses) for the window to calculate completion rate
+    const windowStart = new Date(days[0]);
+    const windowEnd = new Date(days[days.length - 1]);
+    windowEnd.setHours(23, 59, 59, 999);
 
     const totalTasksCreated = await prisma.cleaner_review.count({
       where: {
         company_id: BigInt(companyId),
-        updated_at: { gte: sevenDaysAgo, lte: endOfToday },
+        updated_at: { gte: windowStart, lte: windowEnd },
         ...(roleFilter.id && { location_id: roleFilter.id }),
       },
     });
@@ -335,7 +368,7 @@ export const getWeeklyCleanerPerformance = async (req, res) => {
     );
 
     // Calculate aggregated stats
-    const averagePerDay = (totalTasks / 7).toFixed(1);
+    const averagePerDay = (totalTasks / days.length).toFixed(1);
     const completionRate = totalTasksCreated > 0 
       ? Math.round((totalTasks / totalTasksCreated) * 100) 
       : 0;
@@ -415,7 +448,7 @@ export const getWeeklyCleanerPerformance = async (req, res) => {
 export const getAllLocationsScores = async (req, res) => {
   try {
     // Removed the 'limit' destructuring
-    const { companyId, date } = req.query;
+    const { companyId, date, startDate, endDate } = req.query;
     const user = req.user;
 
     const roleFilter = await RBACFilterService.getLocationFilter(
@@ -424,10 +457,18 @@ export const getAllLocationsScores = async (req, res) => {
     );
 
     // Date range for today's scores
-    const startOfDay = new Date(date || new Date());
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(startOfDay);
-    endOfDay.setHours(23, 59, 59, 999);
+    let startOfDay, endOfDay;
+    if (startDate && endDate) {
+      startOfDay = new Date(startDate);
+      startOfDay.setHours(0, 0, 0, 0);
+      endOfDay = new Date(endDate);
+      endOfDay.setHours(23, 59, 59, 999);
+    } else {
+      startOfDay = new Date(date || new Date());
+      startOfDay.setHours(0, 0, 0, 0);
+      endOfDay = new Date(startOfDay);
+      endOfDay.setHours(23, 59, 59, 999);
+    }
 
     // ✅ Build location where clause with RBAC
     const locationWhereClause = {
@@ -497,7 +538,7 @@ export const getAllLocationsScores = async (req, res) => {
 export const getTodaysActivities = async (req, res) => {
   console.log("entered todays activities controller");
   try {
-    const { companyId, limit = 10, date } = req.query;
+    const { companyId, limit = 10, date, startDate, endDate } = req.query;
     const user = req.user;
 
     // RBAC filter for cleaner activities
@@ -508,10 +549,18 @@ export const getTodaysActivities = async (req, res) => {
 
     console.log(roleFilter, "role filter form todays activities");
     // Date range
-    const startOfDay = new Date(date || new Date());
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(startOfDay);
-    endOfDay.setHours(23, 59, 59, 999);
+    let startOfDay, endOfDay;
+    if (startDate && endDate) {
+      startOfDay = new Date(startDate);
+      startOfDay.setHours(0, 0, 0, 0);
+      endOfDay = new Date(endDate);
+      endOfDay.setHours(23, 59, 59, 999);
+    } else {
+      startOfDay = new Date(date || new Date());
+      startOfDay.setHours(0, 0, 0, 0);
+      endOfDay = new Date(startOfDay);
+      endOfDay.setHours(23, 59, 59, 999);
+    }
 
     const cleanerReviewWhere = {
       company_id: BigInt(companyId),
@@ -612,34 +661,21 @@ export const getTodaysActivities = async (req, res) => {
 
     // Add cleaner activities
     cleanerActivities.forEach((activity) => {
-      // Task started
+      const isCompleted = activity.status === "completed" && activity.updated_at && activity.updated_at > activity.created_at;
+      
       activities.push({
-        id: `${activity.id}-started`,
+        id: activity.id.toString(),
         type: "cleaner",
         reviewId: activity.id.toString(),
-        text: `${activity.cleaner_user?.name || "Cleaner"} started cleaning at ${activity.location?.name || "Unknown location"}`,
-        timestamp: activity.created_at,
+        cleanerName: activity.cleaner_user?.name || "Cleaner",
+        locationName: activity.location?.name || "Unknown location",
+        startedAt: activity.created_at,
+        endedAt: isCompleted ? activity.updated_at : null,
+        timestamp: isCompleted ? activity.updated_at : activity.created_at,
         status: activity.status,
-        activityType: "info",
+        score: activity.score,
+        activityType: isCompleted ? "success" : "warning",
       });
-
-      // Task completed (if updated after creation)
-      if (
-        activity.status === "completed" &&
-        activity.updated_at &&
-        activity.updated_at > activity.created_at
-      ) {
-        activities.push({
-          id: `${activity.id}-completed`,
-          type: "cleaner",
-          reviewId: activity.id.toString(),
-          text: `${activity.cleaner_user?.name || "Cleaner"} completed cleaning at ${activity.location?.name || "Unknown location"}`,
-          timestamp: activity.updated_at,
-          status: "completed",
-          score: activity.score,
-          activityType: "success",
-        });
-      }
     });
 
     // Add user reviews

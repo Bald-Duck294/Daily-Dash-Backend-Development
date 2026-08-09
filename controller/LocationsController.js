@@ -1,5 +1,10 @@
+import crypto from "crypto";
 import prisma from "../config/prismaClient.mjs";
 import db from "../db.js";
+import qrcode from "qrcode";
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+const { ZipArchive } = require("archiver");
 // import RBACFilterService from "../services/rbacFilterService.js";
 import RBACFilterService from "../utils/rbacFilterService.js";
 
@@ -1007,6 +1012,7 @@ export const getAllToilets = async (req, res) => {
         latitude: true,
         longitude: true,
         type_id: true,
+        code: true,
         facility_company_id: true,
         location_types: {
           select: { id: true, name: true },
@@ -1066,6 +1072,7 @@ export const getAllToilets = async (req, res) => {
       return {
         id: loc.id.toString(),
         name: loc.name,
+        code: loc.code,
         created_at: loc.created_at,
         status: loc.status,
         latitude: loc.latitude,
@@ -1580,6 +1587,7 @@ export const createLocation = async (req, res) => {
       no_of_photos: parsedNoOfPhotos || null,
       schedule: finalSchedule,
       is_public: parsedIsPublic,
+      code: `wrm_${crypto.randomBytes(4).toString("hex")}`,
     };
 
     if (type_id)
@@ -1751,7 +1759,6 @@ export const deleteLocationById = async (req, res) => {
     });
   }
 };
-
 
 export const updateLocationById = async (req, res) => {
   console.log("in update location");
@@ -2402,5 +2409,164 @@ export const getZonesWithToilets = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Error fetching zones and toilets" });
+  }
+};
+
+const escapeHtml = (unsafe) => {
+    return (unsafe || '').toString()
+         .replace(/&/g, "&amp;")
+         .replace(/</g, "&lt;")
+         .replace(/>/g, "&gt;")
+         .replace(/"/g, "&quot;")
+         .replace(/'/g, "&#039;");
+};
+
+const generateQRWithText = async (stringToEncode, topText, bottomText = "") => {
+  const qrBuffer = await qrcode.toBuffer(stringToEncode, { width: 300, margin: 1 });
+  
+  const width = 400;
+  const height = bottomText ? 500 : 450;
+  
+  let bottomTextSvg = '';
+  if (bottomText) {
+    bottomTextSvg = `<text x="50%" y="450" font-family="Arial, sans-serif" font-size="20" text-anchor="middle" fill="black">${escapeHtml(bottomText)}</text>`;
+  }
+
+  const svgText = `
+    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100%" height="100%" fill="white" />
+      <text x="50%" y="60" font-family="Arial, sans-serif" font-weight="bold" font-size="24" text-anchor="middle" fill="black">${escapeHtml(topText)}</text>
+      ${bottomTextSvg}
+    </svg>
+  `;
+
+  return require("sharp")(Buffer.from(svgText))
+    .composite([{ input: qrBuffer, top: 100, left: 50 }])
+    .png()
+    .toBuffer();
+};
+
+export const downloadLocationQRs = async (req, res) => {
+  try {
+    const locationId = req.params.id;
+    const { downloadType } = req.query;
+
+    const location = await prisma.locations.findUnique({
+      where: { id: BigInt(locationId) },
+    });
+
+    if (!location) {
+      return res.status(404).json({ message: "Location not found." });
+    }
+
+    let locationCode = location.code;
+    if (!locationCode) {
+      locationCode = 'wrm_' + crypto.randomBytes(4).toString('hex');
+      await prisma.locations.update({
+        where: { id: BigInt(locationId) },
+        data: { code: locationCode }
+      });
+    }
+
+    const dummyUrl = process.env.FRONTEND_URL || 'https://dummy-url.com/manual-form';
+    let generatedUsageCodes = [];
+
+    let usageCategoryObj = location.usage_category;
+    if (typeof usageCategoryObj === 'string') {
+      try { usageCategoryObj = JSON.parse(usageCategoryObj); } catch(e) {}
+    }
+
+    if (downloadType === 'usage_category_only' || downloadType === 'both') {
+      const isUsageEmpty = !usageCategoryObj || 
+                           typeof usageCategoryObj !== 'object' ||
+                           Object.keys(usageCategoryObj).length === 0;
+
+      if (downloadType === 'usage_category_only' && isUsageEmpty) {
+        return res.status(400).json({ message: "No usage categories exist for this location." });
+      }
+    }
+
+    if (downloadType === 'washroom_only') {
+      const stringToEncode = `${dummyUrl}?code=${locationCode}`;
+      const pngBuffer = await generateQRWithText(stringToEncode, location.name);
+
+      res.setHeader('Content-Type', 'image/png');
+      res.setHeader('Content-Disposition', `attachment; filename="${location.name}_qr.png"`);
+      return res.send(pngBuffer);
+    } 
+    
+    if (downloadType === 'usage_category_only' || downloadType === 'both') {
+      const archive = new ZipArchive({ zlib: { level: 9 } });
+      
+      archive.on('error', (err) => {
+        throw err;
+      });
+
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="${location.name}_qr.zip"`);
+      
+      archive.pipe(res);
+
+      if (downloadType === 'both') {
+        const stringToEncode = `${dummyUrl}?code=${locationCode}`;
+        const pngBuffer = await generateQRWithText(stringToEncode, location.name);
+        archive.append(pngBuffer, { name: `${location.name}_qr.png` });
+      }
+
+      if (usageCategoryObj && typeof usageCategoryObj === 'object' && Object.keys(usageCategoryObj).length > 0) {
+        const processCategory = async (obj, prefix = '') => {
+          for (const [key, val] of Object.entries(obj)) {
+            if (val !== null && typeof val === 'object') {
+              await processCategory(val, `${prefix}${key}_`);
+            } else {
+              const numCount = parseInt(val, 10);
+              if (isNaN(numCount) || numCount <= 0) continue;
+
+              for (let i = 1; i <= numCount; i++) {
+                const rawCode = `${prefix}${key}_${i}_${locationCode}`;
+                generatedUsageCodes.push(rawCode);
+                
+                const categoryLabel = (prefix + key).replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                const pngBuffer = await generateQRWithText(rawCode, location.name, `${categoryLabel} (${i})`);
+                archive.append(pngBuffer, { name: `${prefix}${key}_${i}_${location.name}.png` });
+              }
+            }
+          }
+        };
+        await processCategory(usageCategoryObj);
+      }
+
+      if (generatedUsageCodes.length > 0) {
+        let currentMetadata = location.metadata || {};
+        if (typeof currentMetadata === 'string') {
+          try { currentMetadata = JSON.parse(currentMetadata); } catch(e) {}
+        }
+        
+        const updatedMetadata = {
+          ...currentMetadata,
+          usage_category_codes: [
+            ...(currentMetadata.usage_category_codes || []),
+            ...generatedUsageCodes
+          ]
+        };
+
+        // Deduplicate
+        updatedMetadata.usage_category_codes = [...new Set(updatedMetadata.usage_category_codes)];
+
+        await prisma.locations.update({
+          where: { id: BigInt(locationId) },
+          data: { metadata: updatedMetadata }
+        });
+      }
+
+      await archive.finalize();
+    } else {
+      return res.status(400).json({ message: "Invalid downloadType." });
+    }
+  } catch (error) {
+    console.error("Error generating QR codes:", error);
+    if (!res.headersSent) {
+      res.status(500).json({ message: "Internal server error." });
+    }
   }
 };

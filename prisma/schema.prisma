@@ -92,6 +92,7 @@ model locations {
   open_time              DateTime?             @db.Time(6)
   is_public              Boolean               @default(true)
   schedule               Json?                 @db.Json
+  code                   String?               @unique @db.VarChar(255)
   cleaner_assignments    cleaner_assignments[]
   cleaner_reviews        cleaner_review[]      @relation("LocationReviews")
   hygiene_scores         hygiene_scores[]
@@ -202,31 +203,33 @@ model configurations {
 }
 
 model cleaner_review {
-  id               BigInt          @id @default(autoincrement())
-  name             String
-  latitude         Float?
-  longitude        Float?
-  address          String?
-  created_at       DateTime?       @default(now()) @db.Timestamptz(6)
-  updated_at       DateTime?       @updatedAt @db.Timestamptz(6)
-  location_id      BigInt?
-  cleaner_user_id  BigInt?
-  tasks            String[]
-  initial_comment  String?
-  final_comment    String?
-  before_photo     String[]
-  after_photo      String[]
-  status           String          @default("ongoing")
-  company_id       BigInt?
-  score            Float?
-  is_modified      Boolean         @default(false)
-  original_score   Float?
-  score_update_count Int           @default(0)
-  hygiene_score_id BigInt?
-  cleaner_user     users?          @relation("CleanerReviews", fields: [cleaner_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  company          companies?      @relation("CompanyReviews", fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  hygiene_score    hygiene_scores? @relation(fields: [hygiene_score_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  location         locations?      @relation("LocationReviews", fields: [location_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                   BigInt          @id @default(autoincrement())
+  name                 String
+  latitude             Float?
+  longitude            Float?
+  address              String?
+  created_at           DateTime?       @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime?       @updatedAt @db.Timestamptz(6)
+  location_id          BigInt?
+  cleaner_user_id      BigInt?
+  tasks                String[]
+  initial_comment      String?
+  final_comment        String?
+  before_photo         String[]
+  after_photo          String[]
+  status               String          @default("ongoing")
+  company_id           BigInt?
+  score                Float?
+  is_modified          Boolean         @default(false)
+  original_score       Float?
+  score_update_count   Int?            @default(0)
+  modification_comment String?
+  signature            String?
+  hygiene_score_id     BigInt?
+  cleaner_user         users?          @relation("CleanerReviews", fields: [cleaner_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  company              companies?      @relation("CompanyReviews", fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  hygiene_score        hygiene_scores? @relation(fields: [hygiene_score_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  location             locations?      @relation("LocationReviews", fields: [location_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model user_review {

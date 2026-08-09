@@ -12,6 +12,7 @@ import {
   toggleStatusToilet,
   getAllToiletsForWeb,
   getMapToilets,
+  downloadLocationQRs,
 } from "../controller/LocationsController.js";
 import { upload, processAndUploadImages } from "../middlewares/imageUpload.js";
 import { verifyToken } from "../middlewares/authMiddleware.js";
@@ -36,6 +37,7 @@ getLocationRoutes.delete("/:id/image", deleteLocationImage);
 getLocationRoutes.post("/status/:id", toggleStatusToilet);
 // Add this route to your locations routes
 getLocationRoutes.delete("/:id", deleteLocationById);
+getLocationRoutes.get("/:id/qr-codes", verifyToken, downloadLocationQRs);
 
 // getLocationRoutes.post("/update/:id", updateLocationById);
 

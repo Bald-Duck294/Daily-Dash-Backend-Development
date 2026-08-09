@@ -1667,7 +1667,7 @@ export async function getAiInsightsContext(req, res) {
   }
 }
 
-export async function updateSupervisorScore(req, res) {
+export async function updateManagementScore(req, res) {
   const { id } = req.params;
   const { score } = req.body;
   const user = req.user;
@@ -1729,12 +1729,18 @@ export async function updateSupervisorScore(req, res) {
       return res.status(400).json({ success: false, message: "Maximum score updates reached for this activity." });
     }
 
+    // Extract modification_comment and signature from body/files
+    const modification_comment = req.body.modification_comment;
+    const signatureUrl = req.uploadedFiles?.signature?.[0] || req.body.signature; // In case it's sent as string URL
+
     // 6. Update logic
     const updateData = {
       score: numericScore,
       is_modified: true,
       score_update_count: review.score_update_count + 1,
-      updated_at: new Date()
+      updated_at: new Date(),
+      ...(modification_comment && { modification_comment }),
+      ...(signatureUrl && { signature: signatureUrl })
     };
 
     if (review.original_score === null) {
