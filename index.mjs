@@ -79,6 +79,7 @@ const allowedOrigins = [
   "https://safaiindex.vercel.app",
   "https://safai-form.vercel.app",
   "https://safai-index-livid.vercel.app",
+  "https://daily-dash-alpha.vercel.app", // Added new frontend domain
 ];
 
 // app.use(
@@ -91,13 +92,18 @@ const allowedOrigins = [
 // );
 app.use(
   cors({
-    // 'true' dynamically reflects the requesting origin (e.g., your Vercel app)
-    // This gives you wildcard behavior while satisfying the browser's security rules
-    origin: true,
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        // Fallback: reflect the origin anyway to prevent strict blocking while migrating
+        callback(null, true);
+      }
+    },
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
     credentials: true,
-  }),
+  })
 );
 // Routes
 app.use("/api/iot", iotRoutes);
