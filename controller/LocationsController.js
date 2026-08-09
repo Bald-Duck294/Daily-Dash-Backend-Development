@@ -4,7 +4,7 @@ import db from "../db.js";
 import qrcode from "qrcode";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
-import archiver from "archiver";
+import { ZipArchive } from "archiver";
 // import RBACFilterService from "../services/rbacFilterService.js";
 import RBACFilterService from "../utils/rbacFilterService.js";
 
@@ -2496,7 +2496,7 @@ export const downloadLocationQRs = async (req, res) => {
     } 
     
     if (downloadType === 'usage_category_only' || downloadType === 'both') {
-      const archive = archiver('zip', { zlib: { level: 9 } });
+      const archive = new ZipArchive({ zlib: { level: 9 } });
       
       archive.on('error', (err) => {
         throw err;
