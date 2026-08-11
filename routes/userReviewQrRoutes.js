@@ -5,8 +5,6 @@ import axios from "axios";
 import FormData from "form-data";
 const router = express.Router();
 
-export default router;
-
 const normalizeBigInt = (obj) => {
   if (obj === null || obj === undefined) return obj;
 
@@ -77,11 +75,6 @@ async function processUserReviewAIScoring(review, imageUrls) {
   console.log("🔗 Image URLs:", imageUrls);
   console.log("========================================\n");
 
-  // ✅ Helper: Convert 0-100 scale to 1-10 scale
-  const convertScoreTo10Scale = (score) => {
-    if (score <= 10) return score;
-    return Math.round(score) / 10;
-  };
 
   // ✅ Helper: Calculate average score
   const calculateAverageScore = (scores) => {
@@ -150,8 +143,9 @@ async function processUserReviewAIScoring(review, imageUrls) {
 
       const startTime = Date.now();
 
+      const aiServiceUrl = process.env.AI_SERVICE_URL || "https://pugarch-c-score-776087882401.europe-west1.run.app/predict";
       const aiResponse = await axios.post(
-        "https://pugarch-c-score-776087882401.europe-west1.run.app/predict",
+        aiServiceUrl,
         urlPayload,
         {
           headers: {
@@ -267,8 +261,9 @@ async function processUserReviewAIScoring(review, imageUrls) {
         console.log("📤 Sending FormData to AI service...");
         const uploadStart = Date.now();
 
+        const aiServiceUrl = process.env.AI_SERVICE_URL || "https://pugarch-c-score-776087882401.europe-west1.run.app/predict";
         const aiResponse = await axios.post(
-          "https://pugarch-c-score-776087882401.europe-west1.run.app/predict",
+          aiServiceUrl,
           formData,
           {
             headers: {
@@ -719,3 +714,5 @@ router.get("/user-review/recent", async (req, res) => {
     });
   }
 });
+
+export default router;
