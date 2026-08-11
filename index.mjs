@@ -33,6 +33,7 @@ import systemLimitsRouter from "./routes/systemLimitsRoutes.js";
 import workspaceRouter from "./routes/workspaceRoutes.js";
 import ai_insights_Router from "./routes/aiInsightRoute.js";
 import slaConfigRoutes from "./routes/slaConfigRoutes.js";
+import userReviewQrRoutes from "./routes/userReviewQrRoutes.js";
 dotenv.config();
 
 
@@ -122,6 +123,7 @@ app.use("/api/locations", getLocationRoutes);
 app.use("/api/location-types", location_types_router);
 app.use("/api/configurations", configRouter);
 app.use("/api/reviews", reviewRoutes);
+app.use("/api/qr-reviews", userReviewQrRoutes);
 app.use("/api/assignments", clen_assign_router);
 app.use("/api/cleaner-reviews", clean_review_Router);
 app.use("/api/users", userRouter);

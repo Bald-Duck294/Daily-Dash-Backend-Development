@@ -3163,3 +3163,172 @@ export const getAvailableZones = async (req, res) => {
     });
   }
 };
+
+
+
+// ✅ GET /api/reports/washroom-average
+export const getWashroomAverageReport = async (req, res) => {
+  try {
+    const { company_id, location_id, date, start_date, end_date } = req.query;
+    const user = req.user;
+
+    if (!company_id) {
+      return res.status(400).json({ status: "error", message: "company_id is required" });
+    }
+
+    // 1. RBAC and Location Filters
+    const locationWhereClause = {
+      company_id: BigInt(company_id),
+      deleted_at: null,
+    };
+
+    const roleFilter = await RBACFilterService.getLocationFilter(user, "washroom_average_report");
+    Object.assign(locationWhereClause, roleFilter);
+
+    if (location_id && location_id !== "undefined") {
+      locationWhereClause.id = BigInt(location_id);
+    }
+
+    const locations = await prisma.locations.findMany({
+      where: locationWhereClause,
+      select: { id: true, name: true, type_id: true }
+    });
+
+    if (locations.length === 0) {
+      return res.status(200).json({ status: "success", data: [], message: "No locations found" });
+    }
+
+    const locIds = locations.map(l => l.id);
+
+    // 2. Determine Date Filters for "Total"
+    let totalStart = null;
+    let totalEnd = null;
+    if (start_date && start_date !== "undefined") {
+      totalStart = new Date(start_date);
+      totalStart.setHours(0, 0, 0, 0);
+    }
+    if (end_date && end_date !== "undefined") {
+      totalEnd = new Date(end_date);
+      totalEnd.setHours(23, 59, 59, 999);
+    }
+
+    const dateFilter = {};
+    if (totalStart || totalEnd) {
+      dateFilter.created_at = {};
+      if (totalStart) dateFilter.created_at.gte = totalStart;
+      if (totalEnd) dateFilter.created_at.lte = totalEnd;
+    }
+
+    // Determine "Today" filter (use end_date if provided, else date, else actual today)
+    const targetDayDate = end_date && end_date !== "undefined" ? end_date : (date || new Date());
+    const todayStart = new Date(targetDayDate);
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(todayStart);
+    todayEnd.setHours(23, 59, 59, 999);
+
+    // 3. Fetch Data WITH Date Filtering
+    const cleanerReviews = await prisma.cleaner_review.findMany({
+      where: { location_id: { in: locIds }, ...dateFilter },
+      include: { cleaner_user: { select: { role_id: true } } }
+    });
+
+    const userReviews = await prisma.user_review_qr.findMany({
+      where: { location_id: { in: locIds }, ...dateFilter }
+    });
+
+    // 4. Calculate Data per Location
+    const reportData = locations.map(loc => {
+      const locId = loc.id.toString();
+
+      // Filter tasks for this location
+      const locTasks = cleanerReviews.filter(t => t.location_id?.toString() === locId);
+      const locFeedbacks = userReviews.filter(r => r.location_id?.toString() === locId);
+
+      // Distinguish Cleaning Activity (role 5) vs Inspection (role 4)
+      const cleaningActivities = locTasks.filter(t => t.cleaner_user?.role_id === 5);
+      const inspections = locTasks.filter(t => t.cleaner_user?.role_id !== 5); // Supervisor/Admin inspections
+
+      // Calculate Counts
+      const cleaningActivityCount = cleaningActivities.length;
+      const inspectionCount = inspections.length;
+      const userFeedbackCount = locFeedbacks.length;
+
+      // Last Activity Date
+      let lastActivity = null;
+      const allDates = [
+        ...locTasks.map(t => new Date(t.created_at).getTime()),
+        ...locFeedbacks.map(f => new Date(f.created_at).getTime())
+      ].filter(d => !isNaN(d));
+
+      if (allDates.length > 0) {
+        lastActivity = new Date(Math.max(...allDates)).toISOString();
+      }
+
+      // --- Calculate Scores ---
+      const calculateAvg = (items, scoreField) => {
+        const valid = items.filter(i => i[scoreField] !== null && i[scoreField] !== undefined);
+        if (valid.length === 0) return 0;
+        return valid.reduce((sum, item) => sum + Number(item[scoreField]), 0) / valid.length;
+      };
+
+      // TOTAL AVERAGES (Uses all fetched data, which is already filtered by start_date / end_date)
+      const totalCleaningAvg = calculateAvg(cleaningActivities, "score");
+      const totalInspectionAvg = calculateAvg(inspections, "score");
+      const totalFeedbackAvg = calculateAvg(locFeedbacks, "ai_score");
+
+      // TODAY'S AVERAGES (Strictly filters for the 'target day' which is usually the end_date)
+      const todayCleaning = cleaningActivities.filter(t => new Date(t.created_at) >= todayStart && new Date(t.created_at) <= todayEnd);
+      const todayInspections = inspections.filter(t => new Date(t.created_at) >= todayStart && new Date(t.created_at) <= todayEnd);
+      const todayFeedbacks = locFeedbacks.filter(f => new Date(f.created_at) >= todayStart && new Date(f.created_at) <= todayEnd);
+
+      const todayCleaningAvg = calculateAvg(todayCleaning, "score");
+      const todayInspectionAvg = calculateAvg(todayInspections, "score");
+      const todayFeedbackAvg = calculateAvg(todayFeedbacks, "ai_score");
+
+      // Weighted Shift Formula
+      // Assuming equal weights for now: 33% each (if category exists)
+      const calculateWeighted = (cAvg, iAvg, fAvg) => {
+        let totalScore = 0;
+        let weightSum = 0;
+
+        if (cAvg > 0) { totalScore += (cAvg * 0.4); weightSum += 0.4; }
+        if (iAvg > 0) { totalScore += (iAvg * 0.3); weightSum += 0.3; }
+        if (fAvg > 0) { totalScore += (fAvg * 0.3); weightSum += 0.3; }
+
+        if (weightSum === 0) return 0;
+        // Normalize back to 10 point scale
+        return (totalScore / weightSum).toFixed(2);
+      };
+
+      const totalAverage = calculateWeighted(totalCleaningAvg, totalInspectionAvg, totalFeedbackAvg);
+      const todaysAverage = calculateWeighted(todayCleaningAvg, todayInspectionAvg, todayFeedbackAvg);
+
+      return {
+        location_id: locId,
+        washroom_name: loc.name,
+        cleaning_activity_count: cleaningActivityCount,
+        inspection_count: inspectionCount,
+        user_feedback_count: userFeedbackCount,
+        todays_average: parseFloat(todaysAverage),
+        total_average: parseFloat(totalAverage),
+        last_activity: lastActivity,
+      };
+    });
+
+    return res.status(200).json({
+      status: "success",
+      data: reportData,
+      metadata: {
+        report_type: "Washroom Average Report",
+        generated_on: new Date().toISOString(),
+        organization: user?.company_name || "Company",
+        date_range: { start: start_date || "Beginning", end: end_date || "Now" }
+      },
+      message: "Washroom average report generated successfully",
+    });
+
+  } catch (error) {
+    console.error("Error generating washroom average report:", error);
+    res.status(500).json({ status: "error", message: "Failed to generate report" });
+  }
+};

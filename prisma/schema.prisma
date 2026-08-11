@@ -39,6 +39,7 @@ model companies {
   registered_users        registered_users[]
   shifts                  shifts[]
   user_review             user_review[]
+  user_review_qr          user_review_qr[]
   users                   users[]
 }
 
@@ -103,6 +104,7 @@ model locations {
   location_types         location_types?       @relation(fields: [type_id], references: [id], onUpdate: NoAction)
   saved_locations        saved_locations[]
   user_review            user_review[]
+  user_review_qr         user_review_qr[]
 }
 
 model location_types {
@@ -391,21 +393,25 @@ model refresh_tokens {
 }
 
 model user_review_qr {
-  id          BigInt    @id @default(autoincrement())
-  toilet_id   BigInt?
-  name        String?   @db.VarChar(100)
-  email       String?   @db.VarChar(100)
-  phone       String?   @db.VarChar(20)
-  rating      Float?
-  description String?
-  reason_ids  Int[]
-  images      String[]
-  created_at  DateTime? @default(now()) @db.Timestamptz(6)
-  updated_at  DateTime? @default(now()) @db.Timestamptz(6)
-  longitude   Float?
-  latitude    Float?
-  ai_score    Float?
-  company_id  BigInt?
+  id           BigInt     @id @default(autoincrement())
+  toilet_id    BigInt?
+  location_id  BigInt?
+  name         String?    @db.VarChar(100)
+  email        String?    @db.VarChar(100)
+  phone        String?    @db.VarChar(20)
+  rating       Float?
+  description  String?
+  reason_ids   Int[]
+  images       String[]
+  created_at   DateTime?  @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime?  @default(now()) @db.Timestamptz(6)
+  longitude    Float?
+  latitude     Float?
+  ai_score     Float?
+  company_id   BigInt?
+  token_number String?    @unique @db.VarChar(6)
+  companies    companies? @relation(fields: [company_id], references: [id])
+  locations    locations? @relation(fields: [location_id], references: [id], onDelete: Cascade)
 }
 
 model saved_locations {
