@@ -75,7 +75,6 @@ async function processUserReviewAIScoring(review, imageUrls) {
   console.log("🔗 Image URLs:", imageUrls);
   console.log("========================================\n");
 
-
   // ✅ Helper: Calculate average score
   const calculateAverageScore = (scores) => {
     if (!scores || scores.length === 0) return null;
@@ -143,18 +142,16 @@ async function processUserReviewAIScoring(review, imageUrls) {
 
       const startTime = Date.now();
 
-      const aiServiceUrl = process.env.AI_SERVICE_URL || "https://pugarch-c-score-776087882401.europe-west1.run.app/predict";
-      const aiResponse = await axios.post(
-        aiServiceUrl,
-        urlPayload,
-        {
-          headers: {
-            "Content-Type": "application/json",
-            "User-Agent": "UserReview/1.0",
-          },
-          timeout: 15000,
+      const aiServiceUrl =
+        process.env.AI_SERVICE_URL ||
+        "https://pugarch-c-score-776087882401.europe-west1.run.app/predict";
+      const aiResponse = await axios.post(aiServiceUrl, urlPayload, {
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "UserReview/1.0",
         },
-      );
+        timeout: 15000,
+      });
 
       const duration = Date.now() - startTime;
       console.log(`⏱️  Response received in ${duration}ms`);
@@ -261,20 +258,18 @@ async function processUserReviewAIScoring(review, imageUrls) {
         console.log("📤 Sending FormData to AI service...");
         const uploadStart = Date.now();
 
-        const aiServiceUrl = process.env.AI_SERVICE_URL || "https://pugarch-c-score-776087882401.europe-west1.run.app/predict";
-        const aiResponse = await axios.post(
-          aiServiceUrl,
-          formData,
-          {
-            headers: {
-              ...formData.getHeaders(),
-              "User-Agent": "UserReview-AIService/1.0",
-            },
-            timeout: 30000,
-            maxContentLength: Infinity,
-            maxBodyLength: Infinity,
+        const aiServiceUrl =
+          process.env.AI_SERVICE_URL ||
+          "https://pugarch-c-score-776087882401.europe-west1.run.app/predict";
+        const aiResponse = await axios.post(aiServiceUrl, formData, {
+          headers: {
+            ...formData.getHeaders(),
+            "User-Agent": "UserReview-AIService/1.0",
           },
-        );
+          timeout: 30000,
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity,
+        });
 
         const uploadDuration = Date.now() - uploadStart;
         console.log(`⏱️  Response received in ${uploadDuration}ms`);
@@ -441,6 +436,12 @@ router.post(
 
       console.log("✅ Review created with token:", review);
 
+      if (imageUrls.length > 0) {
+        await processUserReviewAIScoring(review, imageUrls);
+      } else {
+        console.log("⚠️ No images to process for AI scoring");
+      }
+
       res.status(201).json({
         success: true,
         data: normalizeBigInt(review),
@@ -448,12 +449,6 @@ router.post(
         tokenNumber: token, // ✅ Return token to frontend
         message: "Review submitted successfully!",
       });
-
-      if (imageUrls.length > 0) {
-        processUserReviewAIScoring(review, imageUrls);
-      } else {
-        console.log("⚠️ No images to process for AI scoring");
-      }
     } catch (error) {
       console.error("Review creation failed:", error);
       res.status(400).json({
