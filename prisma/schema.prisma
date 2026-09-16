@@ -94,6 +94,7 @@ model locations {
   is_public              Boolean               @default(true)
   schedule               Json?                 @db.Json
   code                   String?               @unique @db.VarChar(255)
+  sla_config             Json?                 @db.Json
   cleaner_assignments    cleaner_assignments[]
   cleaner_reviews        cleaner_review[]      @relation("LocationReviews")
   hygiene_scores         hygiene_scores[]
@@ -224,10 +225,10 @@ model cleaner_review {
   score                Float?
   is_modified          Boolean         @default(false)
   original_score       Float?
+  hygiene_score_id     BigInt?
   score_update_count   Int?            @default(0)
   modification_comment String?
   signature            String?
-  hygiene_score_id     BigInt?
   cleaner_user         users?          @relation("CleanerReviews", fields: [cleaner_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   company              companies?      @relation("CompanyReviews", fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   hygiene_score        hygiene_scores? @relation(fields: [hygiene_score_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -395,7 +396,6 @@ model refresh_tokens {
 model user_review_qr {
   id           BigInt     @id @default(autoincrement())
   toilet_id    BigInt?
-  location_id  BigInt?
   name         String?    @db.VarChar(100)
   email        String?    @db.VarChar(100)
   phone        String?    @db.VarChar(20)
@@ -409,6 +409,7 @@ model user_review_qr {
   latitude     Float?
   ai_score     Float?
   company_id   BigInt?
+  location_id  BigInt?
   token_number String?    @unique @db.VarChar(6)
   companies    companies? @relation(fields: [company_id], references: [id])
   locations    locations? @relation(fields: [location_id], references: [id], onDelete: Cascade)
