@@ -5,6 +5,7 @@ import fs from "fs";
 import path from "path";
 import RBACFilterService from "../utils/rbacFilterService.js";
 import { getCompanySLAConfiguration } from "../services/slaConfigurationService.js";
+import { checkAndTriggerWashroomSlaBreach } from "../services/slaNotificationService.js";
 
 // =========================================================
 // 1️⃣ GET all cleaner reviews (with filters)
@@ -986,6 +987,14 @@ async function processHygieneScoring(review, afterPhotos) {
       console.log(`   Final Average Score: ${averageScore}/10`);
       console.log(`   Updated At: ${updatedReview.updated_at}`);
       console.log("========================================\n");
+
+      // Check for Washroom SLA breach and notify cleaner app if rating is below threshold
+      checkAndTriggerWashroomSlaBreach({
+        locationId: reviewData.location_id,
+        score: averageScore,
+        reviewId: reviewData.id,
+        reviewType: "cleaner_review"
+      }).catch((err) => console.error("Error triggering SLA check in processHygieneScoring:", err));
     } catch (updateError) {
       console.log("\n❌ FAILED TO UPDATE CLEANER REVIEW");
       console.log("========================================");
@@ -1700,15 +1709,32 @@ export async function updateManagementScore(req, res) {
       return res.status(404).json({ success: false, message: "Cleaner review not found" });
     }
 
-    // 3. Load SLA Config
-    const companyIdStr = review.company_id ? review.company_id.toString() : null;
-    if (!companyIdStr) {
-      return res.status(400).json({ success: false, message: "Review has no associated company." });
+    // 3. Load SLA Config (Washroom-level override, fallback to Company SLA)
+    let maxUpdates = 1;
+    let isSlaActive = false;
+
+    if (review.location_id) {
+      const locationRecord = await prisma.locations.findUnique({
+        where: { id: BigInt(review.location_id) },
+        select: { metadata: true }
+      });
+      if (locationRecord?.metadata?.sla?.enabled) {
+        isSlaActive = true;
+        maxUpdates = Number(locationRecord.metadata.sla.max_score_updates_per_activity ?? 1);
+      }
     }
-    
-    const slaConfig = await getCompanySLAConfiguration(companyIdStr);
-    if (!slaConfig || !slaConfig.enabled) {
-      return res.status(400).json({ success: false, message: "SLA is not enabled for this company." });
+
+    if (!isSlaActive) {
+      const companyIdStr = review.company_id ? review.company_id.toString() : null;
+      if (!companyIdStr) {
+        return res.status(400).json({ success: false, message: "Review has no associated company." });
+      }
+      
+      const slaConfig = await getCompanySLAConfiguration(companyIdStr);
+      if (!slaConfig || !slaConfig.enabled) {
+        return res.status(400).json({ success: false, message: "SLA is not enabled for this washroom or company." });
+      }
+      maxUpdates = slaConfig.configuration?.max_score_updates_per_activity ?? 1;
     }
 
     // 4. Same-day Validation
@@ -1724,7 +1750,6 @@ export async function updateManagementScore(req, res) {
     }
 
     // 5. Update Limit Validation
-    const maxUpdates = slaConfig.configuration?.max_score_updates_per_activity ?? 1;
     if (review.score_update_count >= maxUpdates) {
       return res.status(400).json({ success: false, message: "Maximum score updates reached for this activity." });
     }
@@ -1751,6 +1776,14 @@ export async function updateManagementScore(req, res) {
       where: { id: BigInt(id) },
       data: updateData
     });
+
+    // Check for Washroom SLA breach on supervisor score override
+    checkAndTriggerWashroomSlaBreach({
+      locationId: review.location_id,
+      score: numericScore,
+      reviewId: review.id,
+      reviewType: "supervisor_override"
+    }).catch((err) => console.error("Error triggering SLA check in updateSupervisorScore:", err));
 
     // Serialization helper function from the controller
     const safeSerialize = (obj) => {

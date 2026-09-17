@@ -7,6 +7,10 @@ import {
     updateSLAConfiguration,
     getCompanySLAList
 } from "../controller/slaConfigController.js";
+import {
+    getWashroomSLAConfiguration,
+    updateWashroomSLAConfiguration
+} from "../controller/washroomSlaController.js";
 
 const router = express.Router();
 
@@ -42,6 +46,11 @@ router.use(verifyToken);
 router.post("/enable", requireSuperAdmin, enableSLA);
 router.post("/disable", requireSuperAdmin, disableSLA);
 router.get("/", requireSuperAdmin, getCompanySLAList);
+
+// Washroom-level SLA routes (must be declared before parameterized :company_id)
+router.get("/washroom/:location_id", getWashroomSLAConfiguration);
+router.put("/washroom/:location_id", requireSuperAdmin, updateWashroomSLAConfiguration);
+
 router.put("/:company_id", requireSuperAdmin, updateSLAConfiguration);
 
 // Allow Super Admin OR Company Member to read SLA configuration

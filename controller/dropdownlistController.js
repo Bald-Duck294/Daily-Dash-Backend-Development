@@ -50,6 +50,8 @@ export const getLocationsForDropdown = async (req, res) => {
         id: true,
         name: true,
         type_id: true,
+        code: true,
+        sla_config: true,
       },
       orderBy: {
         name: "asc",
@@ -60,7 +62,9 @@ export const getLocationsForDropdown = async (req, res) => {
     const formattedLocations = locations.map((loc) => ({
       id: loc.id.toString(),
       name: loc.name,
-      type_id: loc.type_id ? loc.type_id.toString() : null,
+      type_id: loc.type_id ?  loc.type_id ? loc.type_id.toString() : null,
+      code: loc.code || null,
+      sla_config: loc.sla_config || null, : null,
     }));
 
     return res.status(200).json({
