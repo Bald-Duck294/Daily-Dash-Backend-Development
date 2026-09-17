@@ -60,7 +60,7 @@ export const getLocationsForDropdown = async (req, res) => {
     const formattedLocations = locations.map((loc) => ({
       id: loc.id.toString(),
       name: loc.name,
-      type_id:loc.type_id.toString()
+      type_id: loc.type_id ? loc.type_id.toString() : null,
     }));
 
     return res.status(200).json({

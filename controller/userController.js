@@ -538,11 +538,12 @@ export async function getUserById(req, res) {
         ? user?.cleaner_assignments_as_cleaner.map((item) => ({
             ...item,
             id: item?.id?.toString(),
-            location_id: item?.id?.toString(),
+            location_id: item?.location_id ? item.location_id.toString() : item?.id?.toString(),
+            is_active: item?.status === "assigned",
             locations: {
               ...item.locations,
               id: item?.locations?.id?.toString(),
-              type_id: item?.locations?.type_id?.toString(),
+              type_id: item?.locations?.type_id ? item.locations.type_id.toString() : null,
             },
           }))
         : null,
@@ -670,7 +671,7 @@ export const createUser = async (req, res) => {
       // --- END LIMIT CHECKS ---
 
       // Create the user
-      return await tx.users.create({
+      const createdUser = await tx.users.create({
         data: {
           ...data,
           password: hashedPassword,
@@ -681,6 +682,31 @@ export const createUser = async (req, res) => {
         },
         include: {},
       });
+
+      // ✅ Assign locations if provided
+      if (Array.isArray(location_ids) && location_ids.length > 0) {
+        const finalCompanyId = company_id
+          ? BigInt(company_id)
+          : createdUser.company_id;
+
+        for (const locId of location_ids) {
+          if (locId) {
+            await tx.cleaner_assignments.create({
+              data: {
+                name: `${createdUser.name || "Staff"} Assignment`,
+                cleaner_user_id: createdUser.id,
+                company_id: finalCompanyId,
+                location_id: BigInt(locId),
+                role_id: createdUser.role_id,
+                status: "assigned",
+                assigned_on: new Date(),
+              },
+            });
+          }
+        }
+      }
+
+      return createdUser;
     });
 
     const safeUser = serializeBigInt({
@@ -763,25 +789,45 @@ export const updateUser = async (req, res) => {
 
         // Then, create/update new assignments
         if (Array.isArray(location_ids) && location_ids.length > 0) {
+          const companyIdToUse =
+            user?.company_id || (data?.company_id ? BigInt(data.company_id) : null);
+
           for (const locId of location_ids) {
-            await tx.cleaner_assignments.upsert({
-              where: {
-                // ✅ Use composite key from your schema
-                id: BigInt(locId), // If updating existing assignment
-              },
-              update: {
-                status: "assigned",
-                updated_at: new Date(),
-              },
-              create: {
-                cleaner_user_id: userId,
-                location_id: BigInt(locId),
-                company_id: BigInt(data.company_id), // ✅ Add company_id
-                name: data.name, // ✅ Required field
-                status: "assigned",
-                assigned_on: new Date(),
-              },
-            });
+            if (locId) {
+              const locationBigInt = BigInt(locId);
+
+              // Check if assignment record already exists for this user and location
+              const existingAssignment = await tx.cleaner_assignments.findFirst({
+                where: {
+                  cleaner_user_id: userId,
+                  location_id: locationBigInt,
+                  deleted_at: null,
+                },
+              });
+
+              if (existingAssignment) {
+                await tx.cleaner_assignments.update({
+                  where: { id: existingAssignment.id },
+                  data: {
+                    status: "assigned",
+                    role_id: user?.role_id,
+                    updated_at: new Date(),
+                  },
+                });
+              } else {
+                await tx.cleaner_assignments.create({
+                  data: {
+                    cleaner_user_id: userId,
+                    location_id: locationBigInt,
+                    company_id: companyIdToUse,
+                    name: `${user?.name || data?.name || "Staff"} Assignment`,
+                    role_id: user?.role_id,
+                    status: "assigned",
+                    assigned_on: new Date(),
+                  },
+                });
+              }
+            }
           }
         }
       }
