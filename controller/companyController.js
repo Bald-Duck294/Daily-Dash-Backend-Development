@@ -7,6 +7,7 @@ import {
 import { serializeBigInt } from "../utils/serializer.js";
 
 export const getAllCompanies = async (req, res) => {
+  console.log("req")
   const page = parseInt(req.query.page, 10) || 1;
   const limit = parseInt(req.query.limit, 10) || 6;
   const search = req.query.search || "";
