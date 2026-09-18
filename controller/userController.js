@@ -490,6 +490,31 @@ export async function getUserById(req, res) {
             },
           },
         },
+        cleaner_assignments_as_supervisor: {
+          where: {
+            deleted_at: null,
+          },
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            assigned_on: true,
+            location_id: true,
+            locations: {
+              select: {
+                id: true,
+                name: true,
+                address: true,
+                city: true,
+                state: true,
+                latitude: true,
+                longitude: true,
+                pincode: true,
+                type_id: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -502,6 +527,33 @@ export async function getUserById(req, res) {
 
     console.dir(user, { depth: null, colors: true });
     console.log("--- single user ---");
+
+    // Combine cleaner and supervisor assignments, deduplicating by location_id
+    const rawAssignments = [
+      ...(user?.cleaner_assignments_as_cleaner || []),
+      ...(user?.cleaner_assignments_as_supervisor || []),
+    ];
+    const seenLocIds = new Set();
+    const combinedAssignments = [];
+    for (const item of rawAssignments) {
+      const locIdStr = item?.location_id ? item.location_id.toString() : item?.id?.toString();
+      if (locIdStr && !seenLocIds.has(locIdStr)) {
+        seenLocIds.add(locIdStr);
+        combinedAssignments.push({
+          ...item,
+          id: item?.id?.toString(),
+          location_id: locIdStr,
+          is_active: item?.status === "assigned",
+          locations: item?.locations
+            ? {
+                ...item.locations,
+                id: item?.locations?.id?.toString(),
+                type_id: item?.locations?.type_id ? item.locations.type_id.toString() : null,
+              }
+            : null,
+        });
+      }
+    }
 
     // ✅ Manual conversion with proper handling
     const safeUser = {
@@ -534,19 +586,7 @@ export async function getUserById(req, res) {
           }
         : null,
 
-      location_assignments: user?.cleaner_assignments_as_cleaner
-        ? user?.cleaner_assignments_as_cleaner.map((item) => ({
-            ...item,
-            id: item?.id?.toString(),
-            location_id: item?.location_id ? item.location_id.toString() : item?.id?.toString(),
-            is_active: item?.status === "assigned",
-            locations: {
-              ...item.locations,
-              id: item?.locations?.id?.toString(),
-              type_id: item?.locations?.type_id ? item.locations.type_id.toString() : null,
-            },
-          }))
-        : null,
+      location_assignments: combinedAssignments,
     };
 
     // console.log('User found:', safeUser.name);
@@ -764,11 +804,27 @@ export const updateUser = async (req, res) => {
   try {
     const { password, location_ids, ...data } = req.body;
 
-    if (password) {
+    if (password && password.trim().length > 0) {
       data.password = await bcrypt.hash(password, 10);
+    } else {
+      delete data.password;
     }
+
     if (data.birthdate) {
       data.birthdate = new Date(data.birthdate);
+    }
+
+    // 🆕 Fix for Email: Convert empty or whitespace string to null
+    if (data.email === "" || (typeof data.email === "string" && !data.email.trim())) {
+      data.email = null;
+    }
+
+    // Fix for company_id and role_id types
+    if (data.company_id) {
+      data.company_id = BigInt(data.company_id);
+    }
+    if (data.role_id) {
+      data.role_id = parseInt(data.role_id, 10);
     }
 
     const updatedUser = await prisma.$transaction(async (tx) => {
