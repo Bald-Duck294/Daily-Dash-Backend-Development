@@ -510,9 +510,9 @@ export const loginUser = async (req, res) => {
       const hasWorkspace =
         locationCount > 0 || Boolean(company.is_onboarding_completed);
       const hasProfile =
-        company.name &&
+        Boolean(company.name) &&
         company.name !== "Pending Setup" &&
-        company.onboarding_metadata;
+        Boolean(company.onboarding_metadata);
 
       if (!hasWorkspace) {
         nextStep = !hasProfile ? "company" : "workspace";
@@ -970,35 +970,35 @@ export const getOnboardingStatus = async (req, res) => {
     });
 
     const hasWorkspace =
-      locationCount > 0 || Boolean(company.is_onboarding_completed); // Check if profile is complete (Name is set and not default, metadata exists)
+      locationCount > 0 || Boolean(company.is_onboarding_completed);
     const hasProfile =
-      company.name &&
+      Boolean(company.name) &&
       company.name !== "Pending Setup" &&
-      company.onboarding_metadata;
-
-    // const isCompleted = company.is_onboarding_completed;
+      Boolean(company.onboarding_metadata);
 
     let nextStep = "dashboard";
-    // if (!isCompleted) {
-    //   if (!hasProfile) {
-    //     nextStep = "company";
-    //   } else {
-    //     nextStep = "workspace";
-    //   }
-    // }
 
     if (!hasWorkspace) {
       if (!hasProfile) nextStep = "company";
       else nextStep = "workspace";
     }
+
     res.status(200).json({
+      success: true,
       companyProfileCompleted: Boolean(hasProfile),
-      workspaceExists: hasWorkspace,
-      isOnboardingCompleted: Boolean(company.is_onboarding_completed),
+      workspaceExists: Boolean(hasWorkspace),
+      isOnboardingCompleted: Boolean(company.is_onboarding_completed) || Boolean(hasWorkspace),
+      is_onboarding_completed: Boolean(company.is_onboarding_completed) || Boolean(hasWorkspace),
       nextStep,
+      company: {
+        id: company.id.toString(),
+        name: company.name,
+        is_onboarding_completed: Boolean(company.is_onboarding_completed) || Boolean(hasWorkspace),
+        onboarding_metadata: company.onboarding_metadata,
+      },
     });
   } catch (error) {
     console.error("Error fetching onboarding status:", error);
-    res.status(500).json({ message: "Failed to fetch onboarding status" });
+    res.status(500).json({ success: false, message: "Failed to fetch onboarding status" });
   }
 };
