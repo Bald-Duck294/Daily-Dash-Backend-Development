@@ -36,7 +36,6 @@ import slaConfigRoutes from "./routes/slaConfigRoutes.js";
 import userReviewQrRoutes from "./routes/userReviewQrRoutes.js";
 dotenv.config();
 
-
 // ✅ NAYA FIREBASE INITIALIZATION LOGIC (.env se read karega)
 const serviceAccount = {
   type: process.env.FIREBASE_TYPE,
@@ -49,7 +48,7 @@ const serviceAccount = {
   auth_uri: process.env.FIREBASE_AUTH_URI,
   token_uri: process.env.FIREBASE_TOKEN_URI,
   auth_provider_x509_cert_url: process.env.FIREBASE_AUTH_PROVIDER_CERT_URL,
-  client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL, 
+  client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL,
   universe_domain: process.env.FIREBASE_UNIVERSE_DOMAIN,
 };
 
@@ -91,21 +90,23 @@ const allowedOrigins = [
 //     credentials: true,
 //   }),
 // );
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        // Fallback: reflect the origin anyway to prevent strict blocking while migrating
-        callback(null, true);
-      }
-    },
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-    credentials: true,
-  })
-);
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      // Fallback: reflect the origin anyway to prevent strict blocking while migrating
+      callback(null, true);
+    }
+  },
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
+
 // Routes
 app.use("/api/iot", iotRoutes);
 

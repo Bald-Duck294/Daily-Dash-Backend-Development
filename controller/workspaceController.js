@@ -128,10 +128,26 @@ export const deployWorkspace = async (req, res) => {
     }
 
     if (validationErrors.length > 0) {
+      const firstError = validationErrors[0];
+      let step = "users";
+      if (
+        firstError.includes("Hierarchy") ||
+        firstError.includes("Node") ||
+        firstError.includes("Circular") ||
+        firstError.includes("parent_temp_id")
+      ) {
+        step = "hierarchy";
+      } else if (
+        firstError.includes("Washroom") ||
+        firstError.includes("zone_temp_id")
+      ) {
+        step = "washrooms";
+      }
+
       return res.status(400).json({
         success: false,
         code: "VALIDATION_FAILED",
-        step: "users",
+        step,
         message: validationErrors.join(" "),
         errors: validationErrors,
       });
@@ -232,40 +248,12 @@ export const deployWorkspace = async (req, res) => {
         });
 
         // ==========================================
-        // 🏗️ STEP 2: DYNAMIC LOCATION TYPES
+        // 🏗️ STEP 2: HIERARCHY AS LOCATION_TYPES (Topological Sort)
         // ==========================================
-        const uniqueTypes = new Set(hierarchy.map((n) => n.type.toLowerCase()));
-        uniqueTypes.add("washroom");
+        // The hierarchy nodes (buildings, floors, zones) are stored as location_types,
+        // NOT as locations. Only washrooms go into the locations table.
 
-        const existingTypes = await tx.location_types.findMany({
-          where: { company_id: BigInt(companyId) },
-        });
-
-        const typeMap = {};
-
-        for (const typeName of uniqueTypes) {
-          const existing = existingTypes.find(
-            (t) => t.name.toLowerCase() === typeName,
-          );
-          if (existing) {
-            typeMap[typeName] = existing.id;
-          } else {
-            const isToilet = typeName === "washroom";
-            const newType = await tx.location_types.create({
-              data: {
-                name: typeName.charAt(0).toUpperCase() + typeName.slice(1),
-                company_id: BigInt(companyId),
-                is_toilet: isToilet,
-              },
-            });
-            typeMap[typeName] = newType.id;
-          }
-        }
-
-        // ==========================================
-        // 🗺️ STEP 3: HIERARCHY (Topological Sort)
-        // ==========================================
-        const idMap = {};
+        const idMap = {}; // Maps temp_id -> real DB id (for location_types)
         const nodesToProcess = [...hierarchy];
         let safetyCounter = 0;
 
@@ -280,34 +268,36 @@ export const deployWorkspace = async (req, res) => {
 
           const node = nodesToProcess.splice(nodeIndex, 1)[0];
 
-          const createdNode = await tx.locations.create({
+          const createdType = await tx.location_types.create({
             data: {
               name: node.name,
-              ui_type: rawUiType ? String(rawUiType).toLowerCase() : null,
               parent_id: node.parent_temp_id
                 ? BigInt(idMap[node.parent_temp_id])
                 : null,
               company_id: BigInt(companyId),
-              status: true,
+              ui_type: node.type?.toLowerCase() || null,
             },
           });
 
-          idMap[node.temp_id] = createdNode.id;
+          idMap[node.temp_id] = createdType.id;
           safetyCounter++;
         }
 
         // ==========================================
-        // 🚻 STEP 4: WASHROOMS
+        // 🚻 STEP 3: WASHROOMS AS LOCATIONS
         // ==========================================
-        const washroomTypeId = typeMap["washroom"];
+        // Washrooms are the actual locations. Each washroom is linked
+        // to a location_type (hierarchy node) via type_id.
 
         for (const w of washrooms) {
+          // The zone_temp_id references a hierarchy node, which is now a location_type
+          const parentTypeId = w.zone_temp_id ? idMap[w.zone_temp_id] : null;
+
           const createdWashroom = await tx.locations.create({
             data: {
               name: w.name,
-              type_id: washroomTypeId,
-              // Assigns to ANY node (zone, floor, building), not just zones!
-              parent_id: w.zone_temp_id ? BigInt(idMap[w.zone_temp_id]) : null,
+              type_id: parentTypeId ? BigInt(parentTypeId) : null,
+              parent_id: null,
               company_id: BigInt(companyId),
               status: true,
               options: {
@@ -562,7 +552,6 @@ export const getWorkspaceStatus = async (req, res) => {
 export const resetWorkspace = async (req, res) => {
   try {
     const companyId = req.user.company_id;
-
     // Authorization Check: Only Admin (Role 2)
     if (req.user.role_id !== 2) {
       return res

@@ -25,6 +25,7 @@ companyRouter.get("/count", companyController.getCompaniesCount);
 
 companyRouter.post("/setup", verifyToken, companyController.setupCompany);
 companyRouter.post("/reset", verifyToken, companyController.companyReset);
+companyRouter.post("/:id/toggle-stepper", verifyToken, companyController.toggleCompanyStepper);
 companyRouter
   .route("/:id")
   .get(companyController.getCompanyById)

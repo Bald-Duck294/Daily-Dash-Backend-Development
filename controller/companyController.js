@@ -7,6 +7,7 @@ import {
 import { serializeBigInt } from "../utils/serializer.js";
 
 export const getAllCompanies = async (req, res) => {
+  console.log("req")
   const page = parseInt(req.query.page, 10) || 1;
   const limit = parseInt(req.query.limit, 10) || 6;
   const search = req.query.search || "";
@@ -37,6 +38,13 @@ export const getAllCompanies = async (req, res) => {
     const [companies, totalCount] = await Promise.all([
       prisma.companies.findMany({
         where: whereClause,
+        include: {
+          _count: {
+            select: {
+              locations: { where: { deleted_at: null } },
+            },
+          },
+        },
         skip: skip,
         take: limit,
         orderBy: { [safeSortField]: safeSortOrder },
@@ -88,17 +96,28 @@ export const getCompaniesCount = async (req, res) => {
 
 export const createCompany = async (req, res) => {
   try {
-    const { name, description, contact_email } = req.body;
+    const { name, description, contact_email, enable_stepper = true } = req.body;
 
     if (!name) {
       return res.status(400).json({ message: "Company name is required" });
     }
+
+    // If enable_stepper is false, mark is_onboarding_completed: true so stepper is skipped
+    const isOnboardingCompleted = enable_stepper === false;
 
     const newCompany = await prisma.companies.create({
       data: {
         name,
         description,
         contact_email,
+        is_onboarding_completed: isOnboardingCompleted,
+      },
+      include: {
+        _count: {
+          select: {
+            locations: { where: { deleted_at: null } },
+          },
+        },
       },
     });
 
@@ -106,6 +125,63 @@ export const createCompany = async (req, res) => {
   } catch (error) {
     console.error("Error creating company:", error);
     res.status(500).json({ message: "Failed to create company" });
+  }
+};
+
+export const toggleCompanyStepper = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const companyId = BigInt(id);
+
+    const company = await prisma.companies.findUnique({
+      where: { id: companyId },
+      include: {
+        _count: {
+          select: {
+            locations: { where: { deleted_at: null } },
+          },
+        },
+      },
+    });
+
+    if (!company) {
+      return res.status(404).json({ message: "Company not found" });
+    }
+
+    // Condition: when there is data in the company, the stepper toggle button will not take any effect
+    if ((company._count?.locations ?? 0) > 0) {
+      return res.status(400).json({
+        message: "Cannot toggle stepper: Company already has locations/data deployed.",
+      });
+    }
+
+    // If currently true (stepper skipped), new status is false (stepper enabled)
+    // If currently false/null (stepper enabled), new status is true (stepper skipped)
+    const newStatus = !Boolean(company.is_onboarding_completed);
+
+    const updated = await prisma.companies.update({
+      where: { id: companyId },
+      data: {
+        is_onboarding_completed: newStatus,
+        updated_at: new Date(),
+      },
+      include: {
+        _count: {
+          select: {
+            locations: { where: { deleted_at: null } },
+          },
+        },
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: newStatus ? "Stepper disabled for this company" : "Stepper enabled for this company",
+      data: serializeBigInt(updated),
+    });
+  } catch (error) {
+    console.error("Error toggling company stepper:", error);
+    res.status(500).json({ message: "Failed to toggle stepper status" });
   }
 };
 
