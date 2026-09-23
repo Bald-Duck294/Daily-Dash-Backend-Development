@@ -1,6 +1,7 @@
+import { getMessaging } from "firebase-admin/messaging";
+import { getApps } from "firebase-admin/app";
 import prisma from "../config/prismaClient.mjs";
 import { resolveEffectiveWashroomSLA } from "./slaConfigurationService.js";
-import { broadcastNotification } from "./notificationService.js";
 
 /**
  * Checks if a rating breaches the washroom's SLA threshold.
@@ -8,8 +9,7 @@ import { broadcastNotification } from "./notificationService.js";
  * - If org SLA is disabled -> no breach alerts are triggered.
  * - If washroom has custom active SLA -> uses washroom threshold.
  * - If washroom has no custom SLA -> falls back to parent company threshold.
- * If breached, dispatches a multicast push notification to all active devices
- * of assigned cleaners and supervisors on the cleaner app, and records an SLA log.
+ * If breached, dispatches a push notification to assigned cleaners and supervisors on the cleaner app.
  */
 export const checkAndTriggerWashroomSlaBreach = async ({
     locationId,
@@ -49,10 +49,10 @@ export const checkAndTriggerWashroomSlaBreach = async ({
         const locationName = effectiveSla.location_name || "Washroom";
 
         console.log(
-            `🚨 [SLA BREACH (${effectiveSla.source})] Washroom "${locationName}" (ID: ${locIdBigInt}) score ${numericScore.toFixed(1)} is below threshold ${threshold}! Broadcasting push notification...`
+            `🚨 [SLA BREACH (${effectiveSla.source})] Washroom "${locationName}" (ID: ${locIdBigInt}) score ${numericScore.toFixed(1)} is below threshold ${threshold}! Shooting push notification...`
         );
 
-        // 3. Find assigned cleaners and supervisors for this washroom
+        // 4. Find assigned cleaners and supervisors for this washroom
         const assignments = await prisma.cleaner_assignments.findMany({
             where: { location_id: locIdBigInt },
             include: {
@@ -68,66 +68,56 @@ export const checkAndTriggerWashroomSlaBreach = async ({
         const shouldNotifyCleaner = effectiveSla.configuration?.notify_cleaner !== false;
         const shouldNotifySupervisor = effectiveSla.configuration?.notify_supervisor !== false;
 
-        const targetUserIds = new Set();
+        const targetTokens = new Set();
         for (const a of assignments) {
-            if (shouldNotifyCleaner && a.cleaner_user?.id) {
-                targetUserIds.add(a.cleaner_user.id);
+            if (shouldNotifyCleaner && a.cleaner_user?.fcm_token) {
+                targetTokens.add(a.cleaner_user.fcm_token);
             }
-            if (shouldNotifySupervisor && a.supervisor?.id) {
-                targetUserIds.add(a.supervisor.id);
+            if (shouldNotifySupervisor && a.supervisor?.fcm_token) {
+                targetTokens.add(a.supervisor.fcm_token);
             }
         }
 
-        if (targetUserIds.size === 0) {
-            console.log("ℹ️ [SLA BREACH] No assigned cleaners or supervisors found for this washroom.");
-            return { breached: true, notifiedCount: 0, reason: "No assigned staff found" };
+        if (targetTokens.size === 0) {
+            console.log("ℹ️ [SLA BREACH] No active FCM tokens found for assigned staff of this washroom.");
+            return { breached: true, notifiedCount: 0, reason: "No FCM tokens registered" };
         }
 
-        const recipientIds = Array.from(targetUserIds);
+        // 5. Send push notification to all target devices via Firebase Admin
+        if (getApps().length === 0) {
+            console.warn("⚠️ [SLA BREACH] Firebase Admin is not initialized. Cannot dispatch push notifications.");
+            return { breached: true, notifiedCount: 0, reason: "Firebase Admin not initialized" };
+        }
 
-        // 4. Broadcast push notification to all active devices of targeted staff
-        const dispatchResult = await broadcastNotification(recipientIds, {
-            title: "SLA Alert - Low Rating",
-            body: `Rating for "${locationName}" dropped to ${numericScore.toFixed(1)}/10 (SLA threshold: ${threshold}/10). Immediate cleaning required!`,
-            type: "sla_breach",
-            data: {
-                taskId: reviewId ? reviewId.toString() : "",
-                reviewId: reviewId ? reviewId.toString() : "",
-                locationId: locIdBigInt.toString(),
-                score: numericScore.toString(),
-                threshold: threshold.toString()
-            }
-        });
+        const messaging = getMessaging();
+        let successCount = 0;
 
-        // 5. Record SLA Bridge audit log in activity_logs
-        try {
-            await prisma.activity_logs.create({
-                data: {
-                    action: "SLA_BREACH_NOTIFICATION_BROADCAST",
-                    target_type: "locations",
-                    target_id: locIdBigInt,
-                    metadata: {
-                        location_name: locationName,
-                        score: numericScore,
-                        threshold: threshold,
-                        review_id: reviewId ? reviewId.toString() : null,
-                        recipient_user_ids: recipientIds.map((id) => id.toString()),
-                        devices_targeted: dispatchResult.totalTokens,
-                        delivered_count: dispatchResult.successCount,
-                        failed_count: dispatchResult.failureCount
+        for (const token of targetTokens) {
+            try {
+                // Data-only message so cleaner app Service Worker displays custom notification
+                const message = {
+                    token,
+                    data: {
+                        title: "SLA Alert - Low Rating",
+                        body: `Rating for "${locationName}" dropped to ${numericScore.toFixed(1)}/10 (SLA threshold: ${threshold}/10). Immediate cleaning required!`,
+                        type: "sla_breach",
+                        taskId: reviewId ? reviewId.toString() : "",
+                        reviewId: reviewId ? reviewId.toString() : "",
+                        locationId: locIdBigInt.toString(),
+                        score: numericScore.toString(),
+                        threshold: threshold.toString()
                     }
-                }
-            });
-        } catch (logErr) {
-            console.error("⚠️ [SLA BREACH] Failed to write activity log:", logErr.message);
+                };
+
+                await messaging.send(message);
+                successCount++;
+            } catch (fcmError) {
+                console.error(`❌ [SLA BREACH] Error sending push notification to token (${token.slice(0, 10)}...):`, fcmError.message);
+            }
         }
 
-        console.log(`✅ [SLA BREACH] Dispatched SLA alerts for washroom "${locationName}": ${dispatchResult.successCount}/${dispatchResult.totalTokens} delivered across ${recipientIds.length} staff member(s).`);
-        return {
-            breached: true,
-            notifiedCount: dispatchResult.successCount,
-            totalDevices: dispatchResult.totalTokens
-        };
+        console.log(`✅ [SLA BREACH] Successfully sent ${successCount}/${targetTokens.size} notifications for washroom "${locationName}".`);
+        return { breached: true, notifiedCount: successCount };
     } catch (error) {
         console.error("❌ [SLA BREACH] Error in checkAndTriggerWashroomSlaBreach:", error);
         return { breached: false, error: error.message };
