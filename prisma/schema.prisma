@@ -38,6 +38,7 @@ model companies {
   locations               locations[]
   registered_users        registered_users[]
   shifts                  shifts[]
+  sla_escalations         sla_escalations[]
   user_review             user_review[]
   user_review_qr          user_review_qr[]
   users                   users[]
@@ -98,6 +99,7 @@ model locations {
   cleaner_assignments    cleaner_assignments[]
   cleaner_reviews        cleaner_review[]      @relation("LocationReviews")
   hygiene_scores         hygiene_scores[]
+  sla_escalations        sla_escalations[]
   companies              companies?            @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   facility_companies     facility_companies?   @relation(fields: [facility_company_id], references: [id])
   locations              locations?            @relation("locationsTolocations", fields: [parent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -183,8 +185,8 @@ model users {
   refresh_tokens                    refresh_tokens[]
   saved_locations                   saved_locations[]
   sessions                          sessions[]
-  user_fcm_tokens                   user_fcm_tokens[]
   shift_assignments                 shift_assignments[]
+  user_fcm_tokens                   user_fcm_tokens[]
   user_review                       user_review[]
   users                             users?                @relation("usersTousers", fields: [created_by], references: [id], map: "fk_users_created_by")
   other_users                       users[]               @relation("usersTousers")
@@ -230,10 +232,19 @@ model cleaner_review {
   score_update_count   Int?            @default(0)
   modification_comment String?
   signature            String?
-  cleaner_user         users?          @relation("CleanerReviews", fields: [cleaner_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  company              companies?      @relation("CompanyReviews", fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  hygiene_score        hygiene_scores? @relation(fields: [hygiene_score_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  location             locations?      @relation("LocationReviews", fields: [location_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  review_type          String           @default("ORIGINAL") @db.VarChar(20)
+  attempt_no           Int              @default(1)
+  parent_review_id     BigInt?
+  escalation_id        BigInt?
+  cleaner_user         users?           @relation("CleanerReviews", fields: [cleaner_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  company              companies?       @relation("CompanyReviews", fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  hygiene_score        hygiene_scores?  @relation(fields: [hygiene_score_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  location             locations?       @relation("LocationReviews", fields: [location_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  parent_review        cleaner_review?  @relation("ReviewRetries", fields: [parent_review_id], references: [id], onDelete: NoAction)
+  retry_reviews        cleaner_review[] @relation("ReviewRetries")
+  escalation           sla_escalations? @relation("ReviewEscalation", fields: [escalation_id], references: [id], onDelete: SetNull)
+  triggered_escalations sla_escalations[] @relation("TriggeredEscalations")
+  resolved_escalations  sla_escalations[] @relation("ResolvedEscalations")
 }
 
 model user_review {
@@ -466,11 +477,35 @@ model user_fcm_tokens {
   id         BigInt   @id @default(autoincrement())
   user_id    BigInt
   fcm_token  String   @db.VarChar(500)
-  device_id  String?  @db.VarChar(255) // Unique hardware UUID or browser fingerprint
+  device_id  String?  @db.VarChar(255)
   is_active  Boolean  @default(true)
   created_at DateTime @default(now()) @db.Timestamp(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamp(6)
   users      users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@unique([user_id, fcm_token], map: "unique_user_fcm_token")
+}
+
+model sla_escalations {
+  id                     BigInt           @id @default(autoincrement())
+  company_id             BigInt
+  location_id            BigInt
+  triggered_by_review_id BigInt
+  resolved_by_review_id  BigInt?
+  current_level          Int              @default(1)
+  max_level              Int              @default(3)
+  state                  String           @default("OPEN") @db.VarChar(20)
+  snapshot_hierarchy     Json             @db.Json
+  due_at                 DateTime?        @db.Timestamptz(6)
+  created_at             DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime         @updatedAt @db.Timestamptz(6)
+  resolved_at            DateTime?        @db.Timestamptz(6)
+  company                companies        @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  location               locations        @relation(fields: [location_id], references: [id], onDelete: Cascade)
+  triggered_by_review    cleaner_review   @relation("TriggeredEscalations", fields: [triggered_by_review_id], references: [id], onDelete: Restrict)
+  resolved_by_review     cleaner_review?  @relation("ResolvedEscalations", fields: [resolved_by_review_id], references: [id], onDelete: SetNull)
+  corrective_reviews     cleaner_review[] @relation("ReviewEscalation")
+
+  @@index([state, due_at])
+  @@index([location_id, state])
 }
