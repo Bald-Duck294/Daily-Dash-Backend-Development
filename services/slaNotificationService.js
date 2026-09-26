@@ -68,15 +68,38 @@ export const checkAndTriggerWashroomSlaBreach = async ({
         const shouldNotifyCleaner = effectiveSla.configuration?.notify_cleaner !== false;
         const shouldNotifySupervisor = effectiveSla.configuration?.notify_supervisor !== false;
 
-        const targetTokens = new Set();
+        const targetUserIds = new Set();
+        const fallbackTokens = new Set();
+
         for (const a of assignments) {
-            if (shouldNotifyCleaner && a.cleaner_user?.fcm_token) {
-                targetTokens.add(a.cleaner_user.fcm_token);
+            if (shouldNotifyCleaner && a.cleaner_user?.id) {
+                targetUserIds.add(a.cleaner_user.id);
+                if (a.cleaner_user.fcm_token) fallbackTokens.add(a.cleaner_user.fcm_token);
             }
-            if (shouldNotifySupervisor && a.supervisor?.fcm_token) {
-                targetTokens.add(a.supervisor.fcm_token);
+            if (shouldNotifySupervisor && a.supervisor?.id) {
+                targetUserIds.add(a.supervisor.id);
+                if (a.supervisor.fcm_token) fallbackTokens.add(a.supervisor.fcm_token);
             }
         }
+
+        const targetTokens = new Set();
+
+        if (targetUserIds.size > 0) {
+            const activeTokenRecords = await prisma.user_fcm_tokens.findMany({
+                where: {
+                    user_id: { in: Array.from(targetUserIds) },
+                    is_active: true
+                },
+                select: { fcm_token: true }
+            });
+            activeTokenRecords.forEach(r => {
+                if (r.fcm_token) targetTokens.add(r.fcm_token);
+            });
+        }
+
+        fallbackTokens.forEach(t => {
+            if (t) targetTokens.add(t);
+        });
 
         if (targetTokens.size === 0) {
             console.log("ℹ️ [SLA BREACH] No active FCM tokens found for assigned staff of this washroom.");
@@ -113,6 +136,17 @@ export const checkAndTriggerWashroomSlaBreach = async ({
                 successCount++;
             } catch (fcmError) {
                 console.error(`❌ [SLA BREACH] Error sending push notification to token (${token.slice(0, 10)}...):`, fcmError.message);
+
+                if (
+                    fcmError.code === "messaging/registration-token-not-registered" ||
+                    fcmError.code === "messaging/invalid-registration-token" ||
+                    fcmError.message?.includes("not registered")
+                ) {
+                    await prisma.user_fcm_tokens.updateMany({
+                        where: { fcm_token: token },
+                        data: { is_active: false }
+                    }).catch(() => {});
+                }
             }
         }
 

@@ -42,35 +42,59 @@ async function sendEscalationPushNotification({
             }
         });
 
-        const targetTokens = new Set();
-
+        const targetUserIds = new Set();
+        const fallbackTokens = new Set();
         const roleLower = String(targetRole || "").toLowerCase();
+
         for (const a of assignments) {
-            if (roleLower.includes("cleaner") && a.cleaner_user?.fcm_token) {
-                targetTokens.add(a.cleaner_user.fcm_token);
+            if (roleLower.includes("cleaner") && a.cleaner_user?.id) {
+                targetUserIds.add(a.cleaner_user.id);
+                if (a.cleaner_user.fcm_token) fallbackTokens.add(a.cleaner_user.fcm_token);
             }
-            if ((roleLower.includes("supervisor") || roleLower.includes("supv") || roleLower.includes("admin")) && a.supervisor?.fcm_token) {
-                targetTokens.add(a.supervisor.fcm_token);
+            if ((roleLower.includes("supervisor") || roleLower.includes("supv") || roleLower.includes("facility_supv")) && a.supervisor?.id) {
+                targetUserIds.add(a.supervisor.id);
+                if (a.supervisor.fcm_token) fallbackTokens.add(a.supervisor.fcm_token);
             }
         }
 
-        // If target role is admin and no supervisor assigned, also check company admin FCM tokens
-        if (roleLower.includes("admin") && targetTokens.size === 0 && companyId) {
+        // If target role is admin/super_admin/facility_admin, collect company admin user IDs
+        if ((roleLower.includes("admin") || roleLower.includes("facility_admin") || roleLower.includes("super_admin")) && companyId) {
             const adminUsers = await prisma.users.findMany({
                 where: {
                     company_id: BigInt(companyId),
-                    role: { name: { in: ["admin", "super_admin", "Admin", "Super Admin"] } },
-                    fcm_token: { not: null }
+                    role: { name: { in: ["admin", "super_admin", "Admin", "Super Admin", "facility_admin", "Facility Admin"] } }
                 },
-                select: { fcm_token: true }
+                select: { id: true, fcm_token: true }
             });
             adminUsers.forEach(u => {
-                if (u.fcm_token) targetTokens.add(u.fcm_token);
+                targetUserIds.add(u.id);
+                if (u.fcm_token) fallbackTokens.add(u.fcm_token);
             });
         }
 
+        const targetTokens = new Set();
+
+        // Query multi-device user_fcm_tokens table for all target user IDs
+        if (targetUserIds.size > 0) {
+            const activeTokenRecords = await prisma.user_fcm_tokens.findMany({
+                where: {
+                    user_id: { in: Array.from(targetUserIds) },
+                    is_active: true
+                },
+                select: { fcm_token: true }
+            });
+            activeTokenRecords.forEach(r => {
+                if (r.fcm_token) targetTokens.add(r.fcm_token);
+            });
+        }
+
+        // Add fallback legacy tokens if not already present
+        fallbackTokens.forEach(t => {
+            if (t) targetTokens.add(t);
+        });
+
         if (targetTokens.size === 0) {
-            console.log(`ℹ️ [SLA ESCALATION] No FCM tokens found for target role "${targetRole}" on washroom "${locationName}".`);
+            console.log(`ℹ️ [SLA ESCALATION] No active FCM tokens found for target role "${targetRole}" on washroom "${locationName}".`);
             return { sent: false, reason: "No FCM tokens registered" };
         }
 
@@ -101,6 +125,18 @@ async function sendEscalationPushNotification({
                 successCount++;
             } catch (fcmError) {
                 console.error(`❌ [SLA ESCALATION] Failed sending push to token (${token.slice(0, 10)}...):`, fcmError.message);
+
+                // Auto-deactivate dead/invalid tokens
+                if (
+                    fcmError.code === "messaging/registration-token-not-registered" ||
+                    fcmError.code === "messaging/invalid-registration-token" ||
+                    fcmError.message?.includes("not registered")
+                ) {
+                    await prisma.user_fcm_tokens.updateMany({
+                        where: { fcm_token: token },
+                        data: { is_active: false }
+                    }).catch(() => {});
+                }
             }
         }
 
