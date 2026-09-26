@@ -34,6 +34,7 @@ import workspaceRouter from "./routes/workspaceRoutes.js";
 import ai_insights_Router from "./routes/aiInsightRoute.js";
 import slaConfigRoutes from "./routes/slaConfigRoutes.js";
 import userReviewQrRoutes from "./routes/userReviewQrRoutes.js";
+import { startSlaEscalationWorker } from "./workers/slaEscalationWorker.js";
 dotenv.config();
 
 // ✅ NAYA FIREBASE INITIALIZATION LOGIC (.env se read karega)
@@ -208,5 +209,6 @@ app.listen(PORT, () => {
   console.log(
     `----------/////Server running on port ${PORT}\\\\\\\------------`,
   );
-  // console.log(process.env.DATABASE_URL);
+  // Start background cron worker for SLA escalations
+  startSlaEscalationWorker();
 });

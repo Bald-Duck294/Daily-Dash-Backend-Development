@@ -1,6 +1,7 @@
 import prisma from "../config/prismaClient.mjs";
 import { DEFAULT_SLA_CONFIGURATION } from "../constant/slaDefaults.js";
 import { getCompanySLAConfiguration } from "../services/slaConfigurationService.js";
+import { validateSlaConfiguration } from "../validators/slaHierarchyValidator.js";
 
 // Helper to serialize BigInt for JSON responses
 const serializeBigInt = (obj) => {
@@ -119,35 +120,19 @@ export const updateSLAConfiguration = async (req, res) => {
 
         const companyIdBigInt = BigInt(company_id);
 
-        // Fetch existing config
-        const existingConfig = await prisma.configurations.findFirst({
-            where: {
-                name: "SLA_CONFIGURATION",
-                company_id: companyIdBigInt
-            }
-        });
-
-        if (!existingConfig) {
-            return res.status(404).json({ success: false, message: "SLA Configuration not found" });
-        }
-
         // Validate allowed properties
         const allowedProperties = [
+            'version',
             'threshold_score',
             'max_retry_attempts',
             'notify_cleaner',
             'notify_supervisor',
-            'max_score_updates_per_activity'
+            'max_score_updates_per_activity',
+            'escalation'
         ];
 
-        const newDescription = { ...(existingConfig.description || DEFAULT_SLA_CONFIGURATION) };
-        let hasUpdates = false;
-
         for (const key of Object.keys(updates)) {
-            if (allowedProperties.includes(key)) {
-                newDescription[key] = updates[key];
-                hasUpdates = true;
-            } else {
+            if (!allowedProperties.includes(key)) {
                 return res.status(400).json({
                     success: false,
                     message: `Property '${key}' is not allowed to be updated.`
@@ -155,15 +140,52 @@ export const updateSLAConfiguration = async (req, res) => {
             }
         }
 
-        if (!hasUpdates) {
+        // Validate hierarchy, ranges, and types
+        const validation = validateSlaConfiguration(updates);
+        if (!validation.isValid) {
+            return res.status(400).json({
+                success: false,
+                message: validation.error
+            });
+        }
+
+        const sanitizedUpdates = validation.sanitizedUpdates;
+        if (Object.keys(sanitizedUpdates).length === 0) {
             return res.status(400).json({ success: false, message: "No valid properties to update." });
         }
 
-        const updatedConfig = await prisma.configurations.update({
+        // Fetch existing config (if any)
+        const existingConfig = await prisma.configurations.findFirst({
             where: {
-                id: existingConfig.id
+                name: "SLA_CONFIGURATION",
+                company_id: companyIdBigInt
+            }
+        });
+
+        const baseDescription = existingConfig?.description && typeof existingConfig.description === 'object'
+            ? existingConfig.description
+            : DEFAULT_SLA_CONFIGURATION;
+
+        const newDescription = {
+            ...DEFAULT_SLA_CONFIGURATION,
+            ...baseDescription,
+            ...sanitizedUpdates
+        };
+
+        const updatedConfig = await prisma.configurations.upsert({
+            where: {
+                name_company_id: {
+                    name: "SLA_CONFIGURATION",
+                    company_id: companyIdBigInt
+                }
             },
-            data: {
+            update: {
+                description: newDescription
+            },
+            create: {
+                name: "SLA_CONFIGURATION",
+                company_id: companyIdBigInt,
+                is_active: true,
                 description: newDescription
             }
         });

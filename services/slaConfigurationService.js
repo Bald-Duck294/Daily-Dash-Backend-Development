@@ -1,4 +1,5 @@
 import prisma from "../config/prismaClient.mjs";
+import { DEFAULT_SLA_CONFIGURATION } from "../constant/slaDefaults.js";
 
 export const getCompanySLAConfiguration = async (company_id) => {
     try {
@@ -12,13 +13,20 @@ export const getCompanySLAConfiguration = async (company_id) => {
         if (!config) {
             return {
                 enabled: false,
-                configuration: null
+                configuration: DEFAULT_SLA_CONFIGURATION
             };
         }
 
+        const rawDesc = (config.description && typeof config.description === 'object') ? config.description : {};
+        const mergedConfiguration = {
+            ...DEFAULT_SLA_CONFIGURATION,
+            ...rawDesc,
+            escalation: rawDesc.escalation || DEFAULT_SLA_CONFIGURATION.escalation
+        };
+
         return {
             enabled: Boolean(config.is_active),
-            configuration: config.description
+            configuration: mergedConfiguration
         };
     } catch (error) {
         console.error("Error fetching SLA Configuration for company:", error);

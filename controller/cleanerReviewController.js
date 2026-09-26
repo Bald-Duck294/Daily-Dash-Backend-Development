@@ -4,8 +4,8 @@ import FormData from "form-data";
 import fs from "fs";
 import path from "path";
 import RBACFilterService from "../utils/rbacFilterService.js";
-import { getCompanySLAConfiguration } from "../services/slaConfigurationService.js";
 import { checkAndTriggerWashroomSlaBreach } from "../services/slaNotificationService.js";
+import { evaluateReviewSla } from "../services/slaEscalationService.js";
 
 // =========================================================
 // 1️⃣ GET all cleaner reviews (with filters)
@@ -46,34 +46,41 @@ export async function getCleanerReview(req, res) {
       // ✅ CHANGED: Use 'select' instead of 'include' to fetch ONLY what the UI needs
       select: {
         id: true,
+        company_id: true,
+        location_id: true,
         status: true,
         score: true,
         original_score: true,
         is_modified: true,
         created_at: true,
-        before_photo: true, 
+        before_photo: true,
         after_photo: true,
+        review_type: true,
+        attempt_no: true,
+        escalation_id: true,
         cleaner_user: {
           select: {
-           
+            id: true,
             name: true, // Only get the cleaner's name
           },
         },
         location: {
           select: {
-          
-            name: true, // Only get the location name
+            id: true,
+            name: true, // Location name
+            company_id: true,
+            sla_config: true,
           },
         },
         hygiene_score: {
           select: {
-            id:true,
+            id: true,
             details: true, // Only get the AI details JSON, ignore the rest
-          }
-        }
+          },
+        },
       },
       orderBy: {
-        created_at: "desc", 
+        created_at: "desc",
       },
     });
 
@@ -91,7 +98,9 @@ export async function getCleanerReview(req, res) {
         return obj.toNumber();
       }
       if (obj.d && obj.e !== undefined && obj.s !== undefined) {
-        return parseFloat(`${obj.s < 0 ? '-' : ''}${obj.d.join('')}e${obj.e - obj.d.length + 1}`);
+        return parseFloat(
+          `${obj.s < 0 ? "-" : ""}${obj.d.join("")}e${obj.e - obj.d.length + 1}`,
+        );
       }
 
       // ✅ Handle Arrays
@@ -110,7 +119,7 @@ export async function getCleanerReview(req, res) {
     };
 
     const serializedReviews = reviews.map((review) => safeSerialize(review));
-    
+
     res.json(serializedReviews);
   } catch (err) {
     console.error("Fetch Cleaner Reviews Error:", err);
@@ -988,13 +997,18 @@ async function processHygieneScoring(review, afterPhotos) {
       console.log(`   Updated At: ${updatedReview.updated_at}`);
       console.log("========================================\n");
 
-      // Check for Washroom SLA breach and notify cleaner app if rating is below threshold
-      checkAndTriggerWashroomSlaBreach({
-        locationId: reviewData.location_id,
-        score: averageScore,
+      // Evaluate Washroom SLA Escalation engine (handles breach, creation, or retry resolution)
+      evaluateReviewSla({
         reviewId: reviewData.id,
-        reviewType: "cleaner_review"
-      }).catch((err) => console.error("Error triggering SLA check in processHygieneScoring:", err));
+        locationId: reviewData.location_id,
+        companyId: reviewData.company_id,
+        score: averageScore,
+      }).catch((err) =>
+        console.error(
+          "Error triggering SLA evaluation in processHygieneScoring:",
+          err,
+        ),
+      );
     } catch (updateError) {
       console.log("\n❌ FAILED TO UPDATE CLEANER REVIEW");
       console.log("========================================");
@@ -1237,11 +1251,12 @@ async function processHygieneScoring(review, afterPhotos) {
   }
 }
 
+// responsible to modify the claner_review
 export async function updateCleanerReviewScore(req, res) {
   const { id } = req.params;
   const { score } = req.body;
   const user = req.user;
-
+  // console.log("test");
   if (!user) {
     return res.status(401).json({ message: "Unauthorized" });
   }
@@ -1409,6 +1424,17 @@ export async function updateCleanerReviewScore(req, res) {
     console.log("Updated review:", updatedReview.id);
     console.log("Updated hygiene score:", updatedHygieneScore.id);
 
+    // Trigger SLA Escalation if enabled (defaults to true unless explicitly passed false)
+    const triggerEscalation = req.body.trigger_escalation !== false && req.body.trigger_escalation !== "false";
+    if (triggerEscalation && updatedReview.location_id) {
+      evaluateReviewSla({
+        reviewId: updatedReview.id,
+        locationId: updatedReview.location_id,
+        companyId: updatedReview.company_id,
+        score: parseFloat(score)
+      }).catch((err) => console.error("Error triggering SLA evaluation in updateCleanerReviewScore:", err));
+    }
+
     const safeSerialize = (obj) => {
       if (obj === null || obj === undefined) return obj;
       if (typeof obj === "bigint") return obj.toString();
@@ -1444,7 +1470,8 @@ export async function updateCleanerReviewScore(req, res) {
 
 export async function createDemoCleanerReview(req, res) {
   try {
-    const { company_id, name, location_id, cleaner_name, cleaner_phone } = req.body;
+    const { company_id, name, location_id, cleaner_name, cleaner_phone } =
+      req.body;
 
     // The user performing the demo (usually the Admin)
     const cleaner_user_id = req.user.id;
@@ -1464,7 +1491,7 @@ export async function createDemoCleanerReview(req, res) {
           "Clean and flush all urinals",
           "Empty and reline dustbins",
         ],
-        initial_comment: `Demo task started via App Preview by ${cleaner_name || 'Admin'} (${cleaner_phone || ''})`,
+        initial_comment: `Demo task started via App Preview by ${cleaner_name || "Admin"} (${cleaner_phone || ""})`,
         final_comment: "Demo task completed successfully",
 
         // Use placeholder images since we bypassed Multer
@@ -1513,9 +1540,15 @@ export async function createDemoCleanerReview(req, res) {
   }
 }
 
-
 export async function getAiInsightsContext(req, res) {
-  const { company_id, location_id, cleaner_user_id, start_date, end_date, limit } = req.query;
+  const {
+    company_id,
+    location_id,
+    cleaner_user_id,
+    start_date,
+    end_date,
+    limit,
+  } = req.query;
 
   try {
     const whereClause = {};
@@ -1584,12 +1617,12 @@ export async function getAiInsightsContext(req, res) {
         hygiene_score: {
           select: {
             score: true,
-            details: true, 
-          }
-        }
+            details: true,
+          },
+        },
       },
       orderBy: {
-        created_at: "desc", 
+        created_at: "desc",
       },
     });
 
@@ -1598,15 +1631,17 @@ export async function getAiInsightsContext(req, res) {
       if (obj === null || obj === undefined) return obj;
       if (typeof obj === "bigint") return obj.toString();
       if (obj instanceof Date) return obj.toISOString();
-      
+
       if (typeof obj === "object" && typeof obj.toNumber === "function") {
         return obj.toNumber();
       }
       if (obj.d && obj.e !== undefined && obj.s !== undefined) {
-        return parseFloat(`${obj.s < 0 ? '-' : ''}${obj.d.join('')}e${obj.e - obj.d.length + 1}`);
+        return parseFloat(
+          `${obj.s < 0 ? "-" : ""}${obj.d.join("")}e${obj.e - obj.d.length + 1}`,
+        );
       }
       if (Array.isArray(obj)) return obj.map(safeSerialize);
-      
+
       if (typeof obj === "object") {
         const serialized = {};
         for (const [key, value] of Object.entries(obj)) {
@@ -1638,13 +1673,19 @@ export async function getAiInsightsContext(req, res) {
     });
 
     // Calculate metadata dynamically
-    const uniqueCompanies = new Set(formattedActivities.map(a => a.company_id));
-    const uniqueLocations = new Set(formattedActivities.map(a => a.location?.id).filter(Boolean));
-    const uniqueCleaners = new Set(formattedActivities.map(a => a.cleaner?.id).filter(Boolean));
+    const uniqueCompanies = new Set(
+      formattedActivities.map((a) => a.company_id),
+    );
+    const uniqueLocations = new Set(
+      formattedActivities.map((a) => a.location?.id).filter(Boolean),
+    );
+    const uniqueCleaners = new Set(
+      formattedActivities.map((a) => a.cleaner?.id).filter(Boolean),
+    );
 
     let dateFrom = null;
     let dateTo = null;
-    
+
     // Arrays are sorted desc, so first item is the newest (To), last item is the oldest (From)
     if (formattedActivities.length > 0) {
       dateTo = formattedActivities[0].created_at;
@@ -1659,14 +1700,13 @@ export async function getAiInsightsContext(req, res) {
         cleaners: uniqueCleaners.size,
         dateRange: {
           from: dateFrom,
-          to: dateTo
-        }
+          to: dateTo,
+        },
       },
-      activities: formattedActivities
+      activities: formattedActivities,
     };
 
     res.json(responsePayload);
-
   } catch (err) {
     console.error("Fetch AI Context Error:", err);
     res.status(500).json({
@@ -1686,17 +1726,26 @@ export async function updateManagementScore(req, res) {
   }
 
   // 1. RBAC Validation
-  if (Number(user.role_id) !== 1 && (!user.permissions || !user.permissions.includes("cleaner_reviews.manage"))) {
-    return res.status(403).json({ success: false, message: "Permission denied" });
+  if (
+    Number(user.role_id) !== 1 &&
+    (!user.permissions || !user.permissions.includes("cleaner_reviews.manage"))
+  ) {
+    return res
+      .status(403)
+      .json({ success: false, message: "Permission denied" });
   }
 
   if (score === undefined || score === null) {
-    return res.status(400).json({ success: false, message: "Score is required" });
+    return res
+      .status(400)
+      .json({ success: false, message: "Score is required" });
   }
 
   const numericScore = parseFloat(score);
   if (isNaN(numericScore) || numericScore < 0 || numericScore > 10) {
-    return res.status(400).json({ success: false, message: "Score must be between 0 and 10." });
+    return res
+      .status(400)
+      .json({ success: false, message: "Score must be between 0 and 10." });
   }
 
   try {
@@ -1706,7 +1755,9 @@ export async function updateManagementScore(req, res) {
     });
 
     if (!review) {
-      return res.status(404).json({ success: false, message: "Cleaner review not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Cleaner review not found" });
     }
 
     // 3. Load SLA Config (Washroom-level override, fallback to Company SLA)
@@ -1716,23 +1767,33 @@ export async function updateManagementScore(req, res) {
     if (review.location_id) {
       const locationRecord = await prisma.locations.findUnique({
         where: { id: BigInt(review.location_id) },
-        select: { metadata: true }
+        select: { metadata: true },
       });
       if (locationRecord?.metadata?.sla?.enabled) {
         isSlaActive = true;
-        maxUpdates = Number(locationRecord.metadata.sla.max_score_updates_per_activity ?? 1);
+        maxUpdates = Number(
+          locationRecord.metadata.sla.max_score_updates_per_activity ?? 1,
+        );
       }
     }
 
     if (!isSlaActive) {
-      const companyIdStr = review.company_id ? review.company_id.toString() : null;
+      const companyIdStr = review.company_id
+        ? review.company_id.toString()
+        : null;
       if (!companyIdStr) {
-        return res.status(400).json({ success: false, message: "Review has no associated company." });
+        return res.status(400).json({
+          success: false,
+          message: "Review has no associated company.",
+        });
       }
-      
+
       const slaConfig = await getCompanySLAConfiguration(companyIdStr);
       if (!slaConfig || !slaConfig.enabled) {
-        return res.status(400).json({ success: false, message: "SLA is not enabled for this washroom or company." });
+        return res.status(400).json({
+          success: false,
+          message: "SLA is not enabled for this washroom or company.",
+        });
       }
       maxUpdates = slaConfig.configuration?.max_score_updates_per_activity ?? 1;
     }
@@ -1740,23 +1801,30 @@ export async function updateManagementScore(req, res) {
     // 4. Same-day Validation
     const reviewDate = new Date(review.created_at);
     const currentDate = new Date();
-    
+
     if (
       reviewDate.getFullYear() !== currentDate.getFullYear() ||
       reviewDate.getMonth() !== currentDate.getMonth() ||
       reviewDate.getDate() !== currentDate.getDate()
     ) {
-      return res.status(400).json({ success: false, message: "This activity can only be updated on the day it was created." });
+      return res.status(400).json({
+        success: false,
+        message: "This activity can only be updated on the day it was created.",
+      });
     }
 
     // 5. Update Limit Validation
     if (review.score_update_count >= maxUpdates) {
-      return res.status(400).json({ success: false, message: "Maximum score updates reached for this activity." });
+      return res.status(400).json({
+        success: false,
+        message: "Maximum score updates reached for this activity.",
+      });
     }
 
     // Extract modification_comment and signature from body/files
     const modification_comment = req.body.modification_comment;
-    const signatureUrl = req.uploadedFiles?.signature?.[0] || req.body.signature; // In case it's sent as string URL
+    const signatureUrl =
+      req.uploadedFiles?.signature?.[0] || req.body.signature; // In case it's sent as string URL
 
     // 6. Update logic
     const updateData = {
@@ -1765,7 +1833,7 @@ export async function updateManagementScore(req, res) {
       score_update_count: review.score_update_count + 1,
       updated_at: new Date(),
       ...(modification_comment && { modification_comment }),
-      ...(signatureUrl && { signature: signatureUrl })
+      ...(signatureUrl && { signature: signatureUrl }),
     };
 
     if (review.original_score === null) {
@@ -1774,30 +1842,39 @@ export async function updateManagementScore(req, res) {
 
     const updatedReview = await prisma.cleaner_review.update({
       where: { id: BigInt(id) },
-      data: updateData
+      data: updateData,
     });
 
-    // Check for Washroom SLA breach on supervisor score override
-    checkAndTriggerWashroomSlaBreach({
-      locationId: review.location_id,
-      score: numericScore,
+    // Evaluate Washroom SLA Escalation engine on supervisor score override
+    evaluateReviewSla({
       reviewId: review.id,
-      reviewType: "supervisor_override"
-    }).catch((err) => console.error("Error triggering SLA check in updateSupervisorScore:", err));
+      locationId: review.location_id,
+      companyId: review.company_id,
+      score: numericScore,
+    }).catch((err) =>
+      console.error(
+        "Error triggering SLA evaluation in updateSupervisorScore:",
+        err,
+      ),
+    );
 
     // Serialization helper function from the controller
     const safeSerialize = (obj) => {
       if (obj === null || obj === undefined) return obj;
       if (typeof obj === "bigint") return obj.toString();
       if (obj instanceof Date) return obj.toISOString();
-      if (typeof obj === "object" && typeof obj.toNumber === "function") return obj.toNumber();
+      if (typeof obj === "object" && typeof obj.toNumber === "function")
+        return obj.toNumber();
       if (obj.d && obj.e !== undefined && obj.s !== undefined) {
-        return parseFloat(`${obj.s < 0 ? '-' : ''}${obj.d.join('')}e${obj.e - obj.d.length + 1}`);
+        return parseFloat(
+          `${obj.s < 0 ? "-" : ""}${obj.d.join("")}e${obj.e - obj.d.length + 1}`,
+        );
       }
       if (Array.isArray(obj)) return obj.map(safeSerialize);
       if (typeof obj === "object") {
         const serialized = {};
-        for (const [key, value] of Object.entries(obj)) serialized[key] = safeSerialize(value);
+        for (const [key, value] of Object.entries(obj))
+          serialized[key] = safeSerialize(value);
         return serialized;
       }
       return obj;
@@ -1806,12 +1883,14 @@ export async function updateManagementScore(req, res) {
     return res.status(200).json({
       success: true,
       message: "Score updated successfully.",
-      data: safeSerialize(updatedReview)
+      data: safeSerialize(updatedReview),
     });
-
   } catch (err) {
     console.error("Supervisor Score Update Error:", err);
-    return res.status(500).json({ success: false, message: "Failed to update score.", detail: err.message });
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update score.",
+      detail: err.message,
+    });
   }
 }
-
