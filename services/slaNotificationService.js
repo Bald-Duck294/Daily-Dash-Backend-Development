@@ -82,6 +82,21 @@ export const checkAndTriggerWashroomSlaBreach = async ({
             }
         }
 
+        // ✅ Also notify all Super Admins
+        const superAdmins = await prisma.users.findMany({
+            where: {
+                OR: [
+                    { role_id: 1 },
+                    { role: { name: { in: ["super_admin", "Super Admin", "superadmin", "SUPER_ADMIN"] } } }
+                ]
+            },
+            select: { id: true, fcm_token: true }
+        });
+        superAdmins.forEach(sa => {
+            targetUserIds.add(sa.id);
+            if (sa.fcm_token) fallbackTokens.add(sa.fcm_token);
+        });
+
         const targetTokens = new Set();
 
         if (targetUserIds.size > 0) {
@@ -102,7 +117,7 @@ export const checkAndTriggerWashroomSlaBreach = async ({
         });
 
         if (targetTokens.size === 0) {
-            console.log("ℹ️ [SLA BREACH] No active FCM tokens found for assigned staff of this washroom.");
+            console.log("ℹ️ [SLA BREACH] No active FCM tokens found for assigned staff or superadmins of this washroom.");
             return { breached: true, notifiedCount: 0, reason: "No FCM tokens registered" };
         }
 
@@ -112,17 +127,23 @@ export const checkAndTriggerWashroomSlaBreach = async ({
             return { breached: true, notifiedCount: 0, reason: "Firebase Admin not initialized" };
         }
 
+        const notificationTitle = `Cleaning Alert - ${locationName}`;
+        const notificationBody = `Cleanliness score for ${locationName} dropped to ${numericScore.toFixed(1)}/10 (Target: ${threshold}/10). Immediate cleaning required.`;
+
         const messaging = getMessaging();
         let successCount = 0;
 
         for (const token of targetTokens) {
             try {
-                // Data-only message so cleaner app Service Worker displays custom notification
                 const message = {
                     token,
+                    notification: {
+                        title: notificationTitle,
+                        body: notificationBody,
+                    },
                     data: {
-                        title: "SLA Alert - Low Rating",
-                        body: `Rating for "${locationName}" dropped to ${numericScore.toFixed(1)}/10 (SLA threshold: ${threshold}/10). Immediate cleaning required!`,
+                        title: notificationTitle,
+                        body: notificationBody,
                         type: "sla_breach",
                         taskId: reviewId ? reviewId.toString() : "",
                         reviewId: reviewId ? reviewId.toString() : "",

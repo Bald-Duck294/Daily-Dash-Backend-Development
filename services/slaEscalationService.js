@@ -57,12 +57,16 @@ async function sendEscalationPushNotification({
             }
         }
 
-        // If target role is admin/super_admin/facility_admin, collect company admin user IDs
+        // If target role is admin/facility_admin, collect company admin user IDs
         if ((roleLower.includes("admin") || roleLower.includes("facility_admin") || roleLower.includes("super_admin")) && companyId) {
             const adminUsers = await prisma.users.findMany({
                 where: {
                     company_id: BigInt(companyId),
-                    role: { name: { in: ["admin", "super_admin", "Admin", "Super Admin", "facility_admin", "Facility Admin"] } }
+                    OR: [
+                        { role_id: 2 },
+                        { role_id: 8 },
+                        { role: { name: { in: ["admin", "super_admin", "Admin", "Super Admin", "facility_admin", "Facility Admin"] } } }
+                    ]
                 },
                 select: { id: true, fcm_token: true }
             });
@@ -71,6 +75,21 @@ async function sendEscalationPushNotification({
                 if (u.fcm_token) fallbackTokens.add(u.fcm_token);
             });
         }
+
+        // ✅ ALWAYS notify all Super Admins across the platform during any escalation event
+        const superAdmins = await prisma.users.findMany({
+            where: {
+                OR: [
+                    { role_id: 1 },
+                    { role: { name: { in: ["super_admin", "Super Admin", "superadmin", "SUPER_ADMIN"] } } }
+                ]
+            },
+            select: { id: true, fcm_token: true }
+        });
+        superAdmins.forEach(sa => {
+            targetUserIds.add(sa.id);
+            if (sa.fcm_token) fallbackTokens.add(sa.fcm_token);
+        });
 
         const targetTokens = new Set();
 
@@ -94,12 +113,14 @@ async function sendEscalationPushNotification({
         });
 
         if (targetTokens.size === 0) {
-            console.log(`ℹ️ [SLA ESCALATION] No active FCM tokens found for target role "${targetRole}" on washroom "${locationName}".`);
+            console.log(`ℹ️ [SLA ESCALATION] No active FCM tokens found for target role "${targetRole}" or superadmins on washroom "${locationName}".`);
             return { sent: false, reason: "No FCM tokens registered" };
         }
 
-        const defaultTitle = `🚨 SLA Level ${level} Alert - ${locationName}`;
-        const defaultBody = `Washroom "${locationName}" failed SLA with score ${score.toFixed(1)}/10 (Threshold: ${threshold}/10). Action required!`;
+        const defaultTitle = `Cleaning Alert - ${locationName}`;
+        const defaultBody = `Cleanliness score for ${locationName} is ${score.toFixed(1)}/10 (Target: ${threshold}/10). Action required.`;
+        const notificationTitle = title || defaultTitle;
+        const notificationBody = body || defaultBody;
 
         const messaging = getMessaging();
         let successCount = 0;
@@ -108,9 +129,13 @@ async function sendEscalationPushNotification({
             try {
                 const message = {
                     token,
+                    notification: {
+                        title: notificationTitle,
+                        body: notificationBody,
+                    },
                     data: {
-                        title: title || defaultTitle,
-                        body: body || defaultBody,
+                        title: notificationTitle,
+                        body: notificationBody,
                         type: notificationType,
                         escalationId: escalationId ? escalationId.toString() : "",
                         reviewId: reviewId ? reviewId.toString() : "",
@@ -212,8 +237,8 @@ export const createSlaEscalation = async ({
                 escalationId: escalation.id,
                 reviewId: review.id,
                 notificationType: "sla_breach_level_1",
-                title: `🚨 Washroom Cleaning SLA Alert - Level 1`,
-                body: `Washroom score dropped to ${score.toFixed(1)}/10 (Threshold: ${threshold}/10). Corrective cleaning required immediately.`
+                title: `Cleaning Alert - ${effectiveSla.location_name || "Washroom"}`,
+                body: `Cleanliness score for ${effectiveSla.location_name || "Washroom"} dropped to ${score.toFixed(1)}/10 (Target: ${threshold}/10). Immediate cleaning required.`
             });
         }
 
@@ -263,8 +288,8 @@ export const resolveSlaEscalation = async ({
             escalationId: updated.id,
             reviewId: retryReviewId,
             notificationType: "sla_restored",
-            title: `✅ Washroom SLA Restored!`,
-            body: `Corrective cleaning passed with score ${score.toFixed(1)}/10. SLA breach on "${locationName}" is now resolved.`
+            title: `Cleaning Completed - ${locationName}`,
+            body: `${locationName} has been cleaned and inspected with score ${score.toFixed(1)}/10.`
         });
 
         return updated;
@@ -307,8 +332,8 @@ export const exhaustSlaEscalation = async ({
             targetRole: "admin",
             escalationId: updated.id,
             notificationType: "sla_exhausted",
-            title: `⛔ SLA Breached - Max Retries Exhausted`,
-            body: `Washroom "${locationName}" failed all corrective cleaning attempts (Score: ${score.toFixed(1)}/10). Escalation closed as EXHAUSTED.`
+            title: `Critical Alert - ${locationName}`,
+            body: `${locationName} failed inspection after multiple cleaning attempts (Score: ${score.toFixed(1)}/10). Management intervention required.`
         });
 
         return updated;
@@ -386,8 +411,8 @@ export const advanceEscalationLevel = async (escalationId) => {
                 escalationId: escalation.id,
                 reviewId: escalation.triggered_by_review_id,
                 notificationType: `sla_breach_level_${nextLevel}`,
-                title: `🚨 SLA Escalation Level ${nextLevel} - ${escalation.location?.name || "Washroom"}`,
-                body: `Unresolved cleaning breach on "${escalation.location?.name || "Washroom"}". Escalated to Level ${nextLevel} (${nextTargetRole}).`
+                title: `Urgent Cleaning Required - ${escalation.location?.name || "Washroom"}`,
+                body: `Cleaning for ${escalation.location?.name || "Washroom"} remains pending and requires immediate attention.`
             });
         }
 
