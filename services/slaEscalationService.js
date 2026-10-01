@@ -16,6 +16,7 @@ async function sendEscalationPushNotification({
     threshold,
     level,
     targetRole = "cleaner",
+    cleanerUserId = null,
     escalationId,
     reviewId,
     notificationType = "sla_breach_level_1",
@@ -29,37 +30,46 @@ async function sendEscalationPushNotification({
         }
 
         const locIdBigInt = BigInt(locationId);
-
-        // Find staff assigned to this washroom
-        const assignments = await prisma.cleaner_assignments.findMany({
-            where: { location_id: locIdBigInt },
-            include: {
-                cleaner_user: {
-                    select: { id: true, name: true, fcm_token: true }
-                },
-                supervisor: {
-                    select: { id: true, name: true, fcm_token: true }
-                }
-            }
-        });
-
         const targetUserIds = new Set();
         const fallbackTokens = new Set();
         const roleLower = String(targetRole || "").toLowerCase();
 
-        for (const a of assignments) {
-            if ((roleLower.includes("cleaner") || roleLower.includes("all")) && a.cleaner_user?.id) {
-                targetUserIds.add(a.cleaner_user.id);
-                if (a.cleaner_user.fcm_token) fallbackTokens.add(a.cleaner_user.fcm_token);
-            }
-            if ((roleLower.includes("supervisor") || roleLower.includes("supv") || roleLower.includes("facility_supv") || roleLower.includes("all")) && a.supervisor?.id) {
-                targetUserIds.add(a.supervisor.id);
-                if (a.supervisor.fcm_token) fallbackTokens.add(a.supervisor.fcm_token);
+        // 1. Level 1 Cleaner Targeting: Target ONLY the specific cleaner who caused the breach / submitted review
+        if (roleLower.includes("cleaner")) {
+            if (cleanerUserId) {
+                targetUserIds.add(BigInt(cleanerUserId));
+                const cUser = await prisma.users.findUnique({
+                    where: { id: BigInt(cleanerUserId) },
+                    select: { id: true, fcm_token: true }
+                });
+                if (cUser?.fcm_token) fallbackTokens.add(cUser.fcm_token);
             }
         }
 
-        // If target role is admin/facility_admin or all, collect company admin user IDs
-        if ((roleLower.includes("admin") || roleLower.includes("facility_admin") || roleLower.includes("super_admin") || roleLower.includes("all")) && companyId) {
+        // 2. Supervisor / Admin / All Role Targeting
+        if (roleLower.includes("supervisor") || roleLower.includes("supv") || roleLower.includes("all")) {
+            const assignments = await prisma.cleaner_assignments.findMany({
+                where: { location_id: locIdBigInt },
+                include: {
+                    cleaner_user: {
+                        select: { id: true, name: true, fcm_token: true }
+                    },
+                    supervisor: {
+                        select: { id: true, name: true, fcm_token: true }
+                    }
+                }
+            });
+
+            for (const a of assignments) {
+                if (a.supervisor?.id) {
+                    targetUserIds.add(a.supervisor.id);
+                    if (a.supervisor.fcm_token) fallbackTokens.add(a.supervisor.fcm_token);
+                }
+            }
+        }
+
+        // 3. Company Admin Targeting (for Level 3 / admin roles)
+        if ((roleLower.includes("admin") || roleLower.includes("facility_admin") || roleLower.includes("all")) && companyId) {
             const adminUsers = await prisma.users.findMany({
                 where: {
                     company_id: BigInt(companyId),
@@ -77,20 +87,22 @@ async function sendEscalationPushNotification({
             });
         }
 
-        // ALWAYS notify all Super Admins across the platform during any escalation event
-        const superAdmins = await prisma.users.findMany({
-            where: {
-                OR: [
-                    { role_id: 1 },
-                    { role: { name: { in: ["super_admin", "Super Admin", "superadmin", "SUPER_ADMIN"] } } }
-                ]
-            },
-            select: { id: true, fcm_token: true }
-        });
-        superAdmins.forEach(sa => {
-            targetUserIds.add(sa.id);
-            if (sa.fcm_token) fallbackTokens.add(sa.fcm_token);
-        });
+        // 4. Super Admin Targeting: ONLY notify Super Admins at Level 4 or when explicitly targetRole includes "super_admin" or "all"
+        if (roleLower.includes("super_admin") || roleLower.includes("superadmin") || roleLower.includes("all") || level >= 4) {
+            const superAdmins = await prisma.users.findMany({
+                where: {
+                    OR: [
+                        { role_id: 1 },
+                        { role: { name: { in: ["super_admin", "Super Admin", "superadmin", "SUPER_ADMIN"] } } }
+                    ]
+                },
+                select: { id: true, fcm_token: true }
+            });
+            superAdmins.forEach(sa => {
+                targetUserIds.add(sa.id);
+                if (sa.fcm_token) fallbackTokens.add(sa.fcm_token);
+            });
+        }
 
         const targetTokens = new Set();
 
@@ -280,6 +292,7 @@ export const createSlaEscalation = async ({
                 threshold,
                 level: 1,
                 targetRole: level1Config.target_role || "cleaner",
+                cleanerUserId: cleanerUserId,
                 escalationId: escalation.id,
                 reviewId: review.id,
                 notificationType: "sla_breach_level_1",
@@ -641,6 +654,7 @@ export const handleSlaRetry = async ({
             threshold,
             level: activeEscalation.current_level,
             targetRole: "cleaner",
+            cleanerUserId: cleanerUserId,
             escalationId: activeEscalationId,
             reviewId: review.id,
             notificationType: "sla_retry_failed",
