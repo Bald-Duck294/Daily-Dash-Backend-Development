@@ -1,8 +1,39 @@
 import cron from "node-cron";
+import dotenv from "dotenv";
+import { initializeApp, cert, getApps } from "firebase-admin/app";
+import { fileURLToPath } from "url";
 import prisma from "../config/prismaClient.mjs";
 import { advanceEscalationLevel, evaluateReviewSla } from "../services/slaEscalationService.js";
 
 let isProcessing = false;
+
+/**
+ * Ensures Firebase Admin is initialized if environment variables are present.
+ */
+function initFirebaseIfConfigured() {
+    if (getApps().length === 0 && process.env.FIREBASE_PROJECT_ID) {
+        const serviceAccount = {
+            type: process.env.FIREBASE_TYPE,
+            project_id: process.env.FIREBASE_PROJECT_ID,
+            private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
+            private_key: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+            client_email: process.env.FIREBASE_CLIENT_EMAIL,
+            client_id: process.env.FIREBASE_CLIENT_ID,
+            auth_uri: process.env.FIREBASE_AUTH_URI,
+            token_uri: process.env.FIREBASE_TOKEN_URI,
+            auth_provider_x509_cert_url: process.env.FIREBASE_AUTH_PROVIDER_CERT_URL,
+            client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL,
+            universe_domain: process.env.FIREBASE_UNIVERSE_DOMAIN,
+        };
+        try {
+            initializeApp({
+                credential: cert(serviceAccount),
+            });
+        } catch (err) {
+            console.warn("⚠️ [SLA WORKER] Firebase initialization skipped or failed:", err.message);
+        }
+    }
+}
 
 /**
  * Scans for recent completed cleaner reviews that have not yet been evaluated by the SLA engine.
@@ -159,9 +190,43 @@ export function startSlaEscalationWorker() {
     return task;
 }
 
-// Standalone execution support: node workers/slaEscalationWorker.js
-const isDirectExecution = import.meta.url.endsWith(process.argv[1]?.replace(/\\/g, "/") || "");
-if (isDirectExecution || process.env.RUN_SLA_WORKER_STANDALONE === "true") {
-    console.log("▶️ [SLA WORKER] Running in standalone daemon mode...");
-    startSlaEscalationWorker();
+
+/**
+ * One-shot runner for Render Cron Jobs or CLI manual triggers.
+ * Runs one scan/escalation cycle, disconnects database, and cleanly exits with appropriate status code.
+ * Does NOT start node-cron or any persistent background timers.
+ */
+export async function runOnce() {
+    dotenv.config();
+    initFirebaseIfConfigured();
+
+    console.log("🏁 [SLA WORKER] Starting one-shot SLA escalation cycle (Render Cron / CLI mode)...");
+    try {
+        const result = await processDueSlaEscalations();
+        if (result && result.error) {
+            console.error("❌ [SLA WORKER] One-shot cycle encountered an error:", result.error);
+            await prisma.$disconnect();
+            process.exit(1);
+        }
+        console.log("✅ [SLA WORKER] One-shot SLA escalation cycle completed successfully.");
+        await prisma.$disconnect();
+        process.exit(0);
+    } catch (err) {
+        console.error("❌ [SLA WORKER] Fatal error during one-shot SLA escalation execution:", err);
+        try {
+            await prisma.$disconnect();
+        } catch (_) {}
+        process.exit(1);
+    }
 }
+
+// Standalone execution support: `node workers/slaEscalationWorker.js`
+const isDirectExecution = process.argv[1] && (
+    fileURLToPath(import.meta.url) === process.argv[1] ||
+    import.meta.url.endsWith(process.argv[1].replace(/\\/g, "/"))
+);
+
+if (isDirectExecution || process.env.RUN_SLA_WORKER_ONCE === "true") {
+    runOnce();
+}
+

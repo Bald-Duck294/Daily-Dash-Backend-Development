@@ -211,6 +211,12 @@ app.listen(PORT, () => {
   console.log(
     `----------/////Server running on port ${PORT}\\\\\\\------------`,
   );
-  // Start background cron worker for SLA escalations
-  startSlaEscalationWorker();
+  // Start background cron worker for SLA escalations (enabled only for local dev / testing)
+  if (process.env.ENABLE_INPROCESS_CRON === "true") {
+    console.log("⏰ [CRON] Starting in-process SLA escalation worker (ENABLE_INPROCESS_CRON=true)");
+    startSlaEscalationWorker();
+  } else {
+    console.log("ℹ️ [CRON] In-process cron worker disabled (Render Cron / external scheduler mode)");
+  }
 });
+
