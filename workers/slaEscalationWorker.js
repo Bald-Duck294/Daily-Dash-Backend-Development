@@ -1,8 +1,66 @@
 import cron from "node-cron";
 import prisma from "../config/prismaClient.mjs";
-import { advanceEscalationLevel } from "../services/slaEscalationService.js";
+import { advanceEscalationLevel, evaluateReviewSla } from "../services/slaEscalationService.js";
 
 let isProcessing = false;
+
+/**
+ * Scans for recent completed cleaner reviews that have not yet been evaluated by the SLA engine.
+ */
+async function scanUnevaluatedBreaches() {
+    try {
+        const sinceDate = new Date(Date.now() - 24 * 60 * 60 * 1000); // Past 24 hours
+
+        const unlinkedReviews = await prisma.cleaner_review.findMany({
+            where: {
+                status: "completed",
+                score: { not: null },
+                cleaner_user_id: { not: null },
+                location_id: { not: null },
+                company_id: { not: null },
+                escalation_id: null,
+                created_at: { gte: sinceDate }
+            },
+            select: {
+                id: true,
+                company_id: true,
+                location_id: true,
+                cleaner_user_id: true,
+                score: true,
+                created_at: true
+            },
+            orderBy: {
+                created_at: "asc"
+            },
+            take: 20
+        });
+
+        if (unlinkedReviews.length === 0) {
+            return 0;
+        }
+
+        let evaluatedCount = 0;
+        for (const rev of unlinkedReviews) {
+            try {
+                const result = await evaluateReviewSla({
+                    reviewId: rev.id,
+                    locationId: rev.location_id,
+                    companyId: rev.company_id,
+                    score: rev.score
+                });
+                if (result.evaluated && result.breached) {
+                    evaluatedCount++;
+                }
+            } catch (err) {
+                console.error(`❌ [SLA SCANNER] Error evaluating Review #${rev.id}:`, err.message);
+            }
+        }
+        return evaluatedCount;
+    } catch (error) {
+        console.error("❌ [SLA SCANNER ERROR]:", error.message);
+        return 0;
+    }
+}
 
 /**
  * Core execution loop for processing due SLA escalations.
@@ -18,7 +76,10 @@ export async function processDueSlaEscalations() {
     const now = new Date();
 
     try {
-        // Find all active OPEN escalations where due_at <= NOW
+        // 1. Auto-discover and evaluate any newly completed reviews that breached SLA
+        await scanUnevaluatedBreaches();
+
+        // 2. Find all active OPEN escalations where due_at <= NOW
         const dueEscalations = await prisma.sla_escalations.findMany({
             where: {
                 state: "OPEN",
@@ -41,7 +102,7 @@ export async function processDueSlaEscalations() {
         });
 
         if (dueEscalations.length === 0) {
-            // Heartbeat log can be kept concise
+            console.log(`💓 [SLA WORKER HEARTBEAT] Cron active at ${now.toISOString()} | 0 due escalations to process.`);
             return { processed: 0, count: 0 };
         }
 

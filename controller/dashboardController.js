@@ -100,7 +100,7 @@ export const getWashroomScoresSummary = async (req, res) => {
     const { companyId, start_date, end_date } = req.query;
     const user = req.user;
 
-    console.log(BigInt(companyId), "companyId ");
+    // console.log(BigInt(companyId), "companyId ");
     if (!companyId) {
       return res.status(400).json({
         success: false,
@@ -114,7 +114,7 @@ export const getWashroomScoresSummary = async (req, res) => {
       "dashboard",
     );
 
-    console.log(roleFilter, "role filter");
+    // console.log(roleFilter, "role filter");
     const locationWhere = {
       company_id: BigInt(companyId),
       status: true,
@@ -122,7 +122,7 @@ export const getWashroomScoresSummary = async (req, res) => {
       ...roleFilter,
     };
 
-    console.log(locationWhere, "locaton where ");
+    // console.log(locationWhere, "locaton where ");
     // Step 1: Fetch allowed locations
     const locations = await prisma.locations.findMany({
       where: locationWhere,
@@ -283,20 +283,20 @@ export const getWeeklyCleanerPerformance = async (req, res) => {
     );
 
     let startDateObj, endDateObj;
-    
+
     const sDate = start_date || startDate;
     const eDate = end_date || endDate;
 
     if (sDate) {
       startDateObj = new Date(sDate);
       startDateObj.setHours(0, 0, 0, 0);
-      
+
       endDateObj = new Date(eDate || new Date());
       endDateObj.setHours(0, 0, 0, 0);
 
       const diffTime = endDateObj - startDateObj;
       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      
+
       if (diffDays < 6) {
         endDateObj = new Date(startDateObj);
         endDateObj.setDate(startDateObj.getDate() + 6);
@@ -308,7 +308,7 @@ export const getWeeklyCleanerPerformance = async (req, res) => {
       startDateObj.setDate(endDateObj.getDate() - 6);
       startDateObj.setHours(0, 0, 0, 0);
     }
-    
+
     const days = [];
     let currentDate = new Date(startDateObj);
     while (currentDate <= endDateObj) {
@@ -350,8 +350,12 @@ export const getWeeklyCleanerPerformance = async (req, res) => {
         });
 
         totalTasks += count;
-        const dayNameShort = day.toLocaleDateString("en-US", { weekday: "short" });
-        const dayNameLong = day.toLocaleDateString("en-US", { weekday: "long" });
+        const dayNameShort = day.toLocaleDateString("en-US", {
+          weekday: "short",
+        });
+        const dayNameLong = day.toLocaleDateString("en-US", {
+          weekday: "long",
+        });
 
         // Determine Best Day
         if (count > bestDayCount) {
@@ -369,20 +373,21 @@ export const getWeeklyCleanerPerformance = async (req, res) => {
 
     // Calculate aggregated stats
     const averagePerDay = (totalTasks / days.length).toFixed(1);
-    const completionRate = totalTasksCreated > 0 
-      ? Math.round((totalTasks / totalTasksCreated) * 100) 
-      : 0;
+    const completionRate =
+      totalTasksCreated > 0
+        ? Math.round((totalTasks / totalTasksCreated) * 100)
+        : 0;
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       data: performanceData,
       stats: {
         totalTasks,
         averagePerDay: Number(averagePerDay),
         bestDay: bestDayName,
         bestDayCount,
-        completionRate
-      }
+        completionRate,
+      },
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -536,7 +541,7 @@ export const getAllLocationsScores = async (req, res) => {
 };
 
 export const getTodaysActivities = async (req, res) => {
-  console.log("entered todays activities controller");
+  // console.log("entered todays activities controller");
   try {
     const { companyId, limit = 10, date, startDate, endDate } = req.query;
     const user = req.user;
@@ -547,7 +552,7 @@ export const getTodaysActivities = async (req, res) => {
       "cleaneractivity",
     );
 
-    console.log(roleFilter, "role filter form todays activities");
+    // console.log(roleFilter, "role filter form todays activities");
     // Date range
     let startOfDay, endOfDay;
     if (startDate && endDate) {
@@ -587,10 +592,10 @@ export const getTodaysActivities = async (req, res) => {
       // user_review_qr uses toilet_id field
       userReviewWhere.toilet_id = roleFilter.id;
     }
-    console.log(
-      cleanerReviewWhere,
-      "cleaner review where clause todays activities",
-    );
+    // console.log(
+    //   cleanerReviewWhere,
+    //   "cleaner review where clause todays activities",
+    // );
     // Fetch cleaner reviews + user reviews in parallel
     const [cleanerActivities, userReviews] = await Promise.all([
       prisma.cleaner_review.findMany({
@@ -632,7 +637,7 @@ export const getTodaysActivities = async (req, res) => {
         : Promise.resolve([]),
     ]);
 
-    console.log(cleanerActivities, "cleaner activity");
+    // console.log(cleanerActivities, "cleaner activity");
     // ✅ Fetch location names for user reviews
     // Since user_review_qr doesn't have relation to locations, we need to fetch separately
     const toiletIds = userReviews
@@ -661,8 +666,11 @@ export const getTodaysActivities = async (req, res) => {
 
     // Add cleaner activities
     cleanerActivities.forEach((activity) => {
-      const isCompleted = activity.status === "completed" && activity.updated_at && activity.updated_at > activity.created_at;
-      
+      const isCompleted =
+        activity.status === "completed" &&
+        activity.updated_at &&
+        activity.updated_at > activity.created_at;
+
       activities.push({
         id: activity.id.toString(),
         type: "cleaner",
@@ -709,7 +717,7 @@ export const getTodaysActivities = async (req, res) => {
         timestamp: activity.timestamp.toISOString(),
       }));
 
-    console.log(sortedActivities, "sorted activities final");
+    // console.log(sortedActivities, "sorted activities final");
     res.json({
       success: true,
       data: sortedActivities,
@@ -724,7 +732,7 @@ export const getTodaysActivities = async (req, res) => {
 //     console.log('🔍 Generating Washroom Hygiene Heatmap');
 //     try {
 //         const { company_id, start_date, end_date, type_id } = req.query;
-        
+
 //         // ✅ 1. Get authenticated user
 //         const user = req.user;
 //         if (!user) {
@@ -789,8 +797,8 @@ export const getTodaysActivities = async (req, res) => {
 
 //         // ✅ STEP 2: Apply RBAC (Role-Based Access Control)
 //         // Assuming Role 1 = Super Admin. Adjust the ID according to your actual DB roles.
-//         const SUPER_ADMIN_ROLE_ID = 1; 
-        
+//         const SUPER_ADMIN_ROLE_ID = 1;
+
 //         if (user.role_id !== SUPER_ADMIN_ROLE_ID) {
 //             // If NOT a Super Admin, restrict locations to only those assigned to this specific user.
 //             // This OR array handles both direct assignments and zone-based assignments.
@@ -956,7 +964,7 @@ export const getTodaysActivities = async (req, res) => {
 //         const currentDate = new Date(startDateTime);
 
 //         while (currentDate <= endDateTime) {
-//             const dateStr = currentDate.toISOString().split('T')[0]; 
+//             const dateStr = currentDate.toISOString().split('T')[0];
 //             dateColumns.push(dateStr);
 
 //             // Using just the day number to match the frontend UI requirement (1, 2, 3...)
@@ -1043,215 +1051,240 @@ export const getTodaysActivities = async (req, res) => {
 // controllers/reportController.js (or wherever this is located)
 
 export const getWashroomHygieneHeatmap = async (req, res) => {
-    console.log('🔍 Generating Washroom Hygiene Heatmap');
-    try {
-        const { company_id, start_date, end_date, type_id } = req.query;
-        const user = req.user;
+  // console.log("🔍 Generating Washroom Hygiene Heatmap");
+  try {
+    const { company_id, start_date, end_date, type_id } = req.query;
+    const user = req.user;
 
-        if (!user) {
-            return res.status(401).json({ status: "error", message: "Unauthorized" });
-        }
-
-        // Parse dates
-        const startDateTime = new Date(start_date);
-        const endDateTime = new Date(end_date);
-        endDateTime.setHours(23, 59, 59, 999);
-
-        // Fetch company
-        const company = await prisma.companies.findUnique({
-            where: { id: BigInt(company_id) },
-            select: { name: true }
-        });
-
-        // ✅ STEP 1: Base Location Query
-     const locationWhereClause = {
-            company_id: BigInt(company_id),
-            status: true,
-            deleted_at: null
-        };
-
-        if (type_id && type_id !== 'undefined') {
-            locationWhereClause.type_id = BigInt(type_id);
-        }
-
-        // ✅ STEP 2: Apply RBAC (Role-Based Access Control) using your existing service
-        const SUPER_ADMIN_ROLE_ID = 1; // Adjust if needed
-
-        if (Number(user.role_id) !== SUPER_ADMIN_ROLE_ID) {
-            console.log(`🛡️ Applying RBAC for User ID: ${user.id}`);
-            
-            try {
-                // Using the exact service call from your original code
-                const roleFilter = await RBACFilterService.getLocationFilter(user, "washroom_daily_scores");
-                
-                if (roleFilter) {
-                    Object.assign(locationWhereClause, roleFilter);
-                    console.log("✅ RBAC Filter Applied successfully.");
-                }
-            } catch (rbacError) {
-                console.error("❌ RBAC Filter Service Error:", rbacError);
-                return res.status(500).json({ 
-                    status: "error", 
-                    message: "Failed to apply user permissions." 
-                });
-            }
-        } else {
-            console.log("🔓 Super Admin detected. Fetching all washrooms.");
-        }
-
-        // ✅ STEP 3: Fetch filtered washrooms
-        const washrooms = await prisma.locations.findMany({
-            where: locationWhereClause,
-            include: { location_types: { select: { name: true } } },
-            orderBy: { name: 'asc' }
-        });
-
-        // If no washrooms are assigned to this Facility Admin, return empty early
-        if (washrooms.length === 0) {
-            return res.status(200).json({
-                status: "success",
-                message: "No washrooms allocated to this user.",
-                metadata: {
-                    report_type: "Washroom Hygiene Heatmap",
-                    organization: company?.name || "Unknown",
-                    generated_on: new Date().toISOString(),
-                    total_days: 0,
-                    total_washrooms: 0,
-                    overall_avg_score: 0,
-                    date_columns: []
-                },
-                data: [],
-                count: 0
-            });
-        }
-
-        const washroomIds = washrooms.map(w => w.id);
-
-        // ✅ STEP 4: Get assigned cleaners for UI display
-        const assignments = await prisma.cleaner_assignments.findMany({
-            where: {
-                location_id: { in: washroomIds },
-                status: 'assigned',
-                deleted_at: null,
-                role_id: 5,
-                cleaner_user: { deleted_at: null }
-            },
-            include: { cleaner_user: { select: { id: true, name: true, phone: true } } }
-        });
-
-        const assignmentsByLocation = new Map();
-        assignments.forEach(assignment => {
-            const locId = assignment.location_id?.toString();
-            if (!assignmentsByLocation.has(locId)) assignmentsByLocation.set(locId, []);
-            assignmentsByLocation.get(locId).push({
-                id: assignment.cleaner_user.id.toString(),
-                name: assignment.cleaner_user.name,
-                phone: assignment.cleaner_user.phone
-            });
-        });
-
-        // ✅ STEP 5: Fetch hygiene scores
-        const hygieneScores = await prisma.hygiene_scores.findMany({
-            where: {
-                location_id: { in: washroomIds },
-                inspected_at: { gte: startDateTime, lte: endDateTime }
-            },
-            select: { location_id: true, score: true, inspected_at: true },
-            orderBy: { inspected_at: 'asc' }
-        });
-
-        const scoresByLocationAndDate = new Map();
-        const allScoresByLocation = new Map();
-
-        hygieneScores.forEach(record => {
-            if (!record.location_id || record.score == null) return;
-            const locId = record.location_id.toString();
-            const dateStr = new Date(record.inspected_at).toISOString().split('T')[0];
-            const key = `${locId}_${dateStr}`;
-
-            if (!scoresByLocationAndDate.has(key)) scoresByLocationAndDate.set(key, []);
-            scoresByLocationAndDate.get(key).push({
-                score: Number(record.score),
-                timestamp: record.inspected_at
-            });
-
-            if (!allScoresByLocation.has(locId)) allScoresByLocation.set(locId, []);
-            allScoresByLocation.get(locId).push(Number(record.score));
-        });
-
-        const latestScorePerDay = new Map();
-        scoresByLocationAndDate.forEach((scores, key) => {
-            const sortedScores = scores.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-            latestScorePerDay.set(key, parseFloat(sortedScores[0].score.toFixed(2)));
-        });
-
-        // ✅ STEP 6: Generate date columns
-        const dateColumns = [];
-        const dateColumnsFormatted = [];
-        const currentDate = new Date(startDateTime);
-
-        while (currentDate <= endDateTime) {
-            const dateStr = currentDate.toISOString().split('T')[0]; 
-            dateColumns.push(dateStr);
-            dateColumnsFormatted.push(currentDate.toLocaleDateString('en-GB', { day: 'numeric' }));
-            currentDate.setDate(currentDate.getDate() + 1);
-        }
-
-        // ✅ STEP 7: Build final report data
-        const reportData = washrooms.map((washroom, index) => {
-            const washroomId = washroom.id.toString();
-            const assignedCleaners = assignmentsByLocation.get(washroomId) || [];
-
-            const dailyScores = {};
-            dateColumns.forEach(dateStr => {
-                const key = `${washroomId}_${dateStr}`;
-                const latestScore = latestScorePerDay.get(key);
-                dailyScores[dateStr] = latestScore !== undefined ? latestScore : null;
-            });
-
-            const allScores = allScoresByLocation.get(washroomId) || [];
-            const averageScore = allScores.length > 0
-                ? parseFloat((allScores.reduce((sum, s) => sum + s, 0) / allScores.length).toFixed(2))
-                : null;
-
-            return {
-                sr_no: index + 1,
-                washroom_id: washroomId,
-                washroom_name: washroom.name,
-                zone_type: washroom.location_types?.name || "N/A",
-                assigned_cleaners: assignedCleaners.map(c => c.name),
-                assigned_cleaners_ids: assignedCleaners.map(c => c.id),
-                daily_scores: dailyScores,
-                average_score: averageScore,
-                address: washroom.address || "N/A",
-                city: washroom.city || "N/A"
-            };
-        });
-
-        const washroomsWithScores = reportData.filter(w => w.average_score !== null);
-        const overallAvgScore = washroomsWithScores.length > 0
-            ? parseFloat((washroomsWithScores.reduce((sum, w) => sum + w.average_score, 0) / washroomsWithScores.length).toFixed(2))
-            : 0;
-
-        // ✅ STEP 8: Return response
-        res.status(200).json({
-            status: "success",
-            message: "Washroom Hygiene Heatmap generated successfully",
-            metadata: {
-                report_type: "Washroom Hygiene Heatmap",
-                organization: company.name,
-                generated_on: new Date().toISOString(),
-                total_days: dateColumns.length,
-                total_washrooms: reportData.length,
-                overall_avg_score: overallAvgScore,
-                date_columns: dateColumnsFormatted
-            },
-            data: reportData,
-            count: reportData.length
-        });
-
-    } catch (error) {
-        console.error("❌ Error:", error);
-        res.status(500).json({ status: "error", message: "Failed to generate heatmap" });
+    if (!user) {
+      return res.status(401).json({ status: "error", message: "Unauthorized" });
     }
+
+    // Parse dates
+    const startDateTime = new Date(start_date);
+    const endDateTime = new Date(end_date);
+    endDateTime.setHours(23, 59, 59, 999);
+
+    // Fetch company
+    const company = await prisma.companies.findUnique({
+      where: { id: BigInt(company_id) },
+      select: { name: true },
+    });
+
+    // ✅ STEP 1: Base Location Query
+    const locationWhereClause = {
+      company_id: BigInt(company_id),
+      status: true,
+      deleted_at: null,
+    };
+
+    if (type_id && type_id !== "undefined") {
+      locationWhereClause.type_id = BigInt(type_id);
+    }
+
+    // ✅ STEP 2: Apply RBAC (Role-Based Access Control) using your existing service
+    const SUPER_ADMIN_ROLE_ID = 1; // Adjust if needed
+
+    if (Number(user.role_id) !== SUPER_ADMIN_ROLE_ID) {
+      // console.log(`🛡️ Applying RBAC for User ID: ${user.id}`);
+
+      try {
+        // Using the exact service call from your original code
+        const roleFilter = await RBACFilterService.getLocationFilter(
+          user,
+          "washroom_daily_scores",
+        );
+
+        if (roleFilter) {
+          Object.assign(locationWhereClause, roleFilter);
+          console.log("✅ RBAC Filter Applied successfully.");
+        }
+      } catch (rbacError) {
+        console.error("❌ RBAC Filter Service Error:", rbacError);
+        return res.status(500).json({
+          status: "error",
+          message: "Failed to apply user permissions.",
+        });
+      }
+    } else {
+      console.log("🔓 Super Admin detected. Fetching all washrooms.");
+    }
+
+    // ✅ STEP 3: Fetch filtered washrooms
+    const washrooms = await prisma.locations.findMany({
+      where: locationWhereClause,
+      include: { location_types: { select: { name: true } } },
+      orderBy: { name: "asc" },
+    });
+
+    // If no washrooms are assigned to this Facility Admin, return empty early
+    if (washrooms.length === 0) {
+      return res.status(200).json({
+        status: "success",
+        message: "No washrooms allocated to this user.",
+        metadata: {
+          report_type: "Washroom Hygiene Heatmap",
+          organization: company?.name || "Unknown",
+          generated_on: new Date().toISOString(),
+          total_days: 0,
+          total_washrooms: 0,
+          overall_avg_score: 0,
+          date_columns: [],
+        },
+        data: [],
+        count: 0,
+      });
+    }
+
+    const washroomIds = washrooms.map((w) => w.id);
+
+    // ✅ STEP 4: Get assigned cleaners for UI display
+    const assignments = await prisma.cleaner_assignments.findMany({
+      where: {
+        location_id: { in: washroomIds },
+        status: "assigned",
+        deleted_at: null,
+        role_id: 5,
+        cleaner_user: { deleted_at: null },
+      },
+      include: {
+        cleaner_user: { select: { id: true, name: true, phone: true } },
+      },
+    });
+
+    const assignmentsByLocation = new Map();
+    assignments.forEach((assignment) => {
+      const locId = assignment.location_id?.toString();
+      if (!assignmentsByLocation.has(locId))
+        assignmentsByLocation.set(locId, []);
+      assignmentsByLocation.get(locId).push({
+        id: assignment.cleaner_user.id.toString(),
+        name: assignment.cleaner_user.name,
+        phone: assignment.cleaner_user.phone,
+      });
+    });
+
+    // ✅ STEP 5: Fetch hygiene scores
+    const hygieneScores = await prisma.hygiene_scores.findMany({
+      where: {
+        location_id: { in: washroomIds },
+        inspected_at: { gte: startDateTime, lte: endDateTime },
+      },
+      select: { location_id: true, score: true, inspected_at: true },
+      orderBy: { inspected_at: "asc" },
+    });
+
+    const scoresByLocationAndDate = new Map();
+    const allScoresByLocation = new Map();
+
+    hygieneScores.forEach((record) => {
+      if (!record.location_id || record.score == null) return;
+      const locId = record.location_id.toString();
+      const dateStr = new Date(record.inspected_at).toISOString().split("T")[0];
+      const key = `${locId}_${dateStr}`;
+
+      if (!scoresByLocationAndDate.has(key))
+        scoresByLocationAndDate.set(key, []);
+      scoresByLocationAndDate.get(key).push({
+        score: Number(record.score),
+        timestamp: record.inspected_at,
+      });
+
+      if (!allScoresByLocation.has(locId)) allScoresByLocation.set(locId, []);
+      allScoresByLocation.get(locId).push(Number(record.score));
+    });
+
+    const latestScorePerDay = new Map();
+    scoresByLocationAndDate.forEach((scores, key) => {
+      const sortedScores = scores.sort(
+        (a, b) => new Date(b.timestamp) - new Date(a.timestamp),
+      );
+      latestScorePerDay.set(key, parseFloat(sortedScores[0].score.toFixed(2)));
+    });
+
+    // ✅ STEP 6: Generate date columns
+    const dateColumns = [];
+    const dateColumnsFormatted = [];
+    const currentDate = new Date(startDateTime);
+
+    while (currentDate <= endDateTime) {
+      const dateStr = currentDate.toISOString().split("T")[0];
+      dateColumns.push(dateStr);
+      dateColumnsFormatted.push(
+        currentDate.toLocaleDateString("en-GB", { day: "numeric" }),
+      );
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    // ✅ STEP 7: Build final report data
+    const reportData = washrooms.map((washroom, index) => {
+      const washroomId = washroom.id.toString();
+      const assignedCleaners = assignmentsByLocation.get(washroomId) || [];
+
+      const dailyScores = {};
+      dateColumns.forEach((dateStr) => {
+        const key = `${washroomId}_${dateStr}`;
+        const latestScore = latestScorePerDay.get(key);
+        dailyScores[dateStr] = latestScore !== undefined ? latestScore : null;
+      });
+
+      const allScores = allScoresByLocation.get(washroomId) || [];
+      const averageScore =
+        allScores.length > 0
+          ? parseFloat(
+              (
+                allScores.reduce((sum, s) => sum + s, 0) / allScores.length
+              ).toFixed(2),
+            )
+          : null;
+
+      return {
+        sr_no: index + 1,
+        washroom_id: washroomId,
+        washroom_name: washroom.name,
+        zone_type: washroom.location_types?.name || "N/A",
+        assigned_cleaners: assignedCleaners.map((c) => c.name),
+        assigned_cleaners_ids: assignedCleaners.map((c) => c.id),
+        daily_scores: dailyScores,
+        average_score: averageScore,
+        address: washroom.address || "N/A",
+        city: washroom.city || "N/A",
+      };
+    });
+
+    const washroomsWithScores = reportData.filter(
+      (w) => w.average_score !== null,
+    );
+    const overallAvgScore =
+      washroomsWithScores.length > 0
+        ? parseFloat(
+            (
+              washroomsWithScores.reduce((sum, w) => sum + w.average_score, 0) /
+              washroomsWithScores.length
+            ).toFixed(2),
+          )
+        : 0;
+
+    // ✅ STEP 8: Return response
+    res.status(200).json({
+      status: "success",
+      message: "Washroom Hygiene Heatmap generated successfully",
+      metadata: {
+        report_type: "Washroom Hygiene Heatmap",
+        organization: company.name,
+        generated_on: new Date().toISOString(),
+        total_days: dateColumns.length,
+        total_washrooms: reportData.length,
+        overall_avg_score: overallAvgScore,
+        date_columns: dateColumnsFormatted,
+      },
+      data: reportData,
+      count: reportData.length,
+    });
+  } catch (error) {
+    console.error("❌ Error:", error);
+    res
+      .status(500)
+      .json({ status: "error", message: "Failed to generate heatmap" });
+  }
 };

@@ -32,3 +32,15 @@ export const DEFAULT_SLA_CONFIGURATION = {
     }
 };
 
+export const SLA_EVENT_TYPES = Object.freeze({
+    SLA_BREACH: "SLA_BREACH",                   // Initial breach creating Level 1 escalation
+    RETRY_ATTEMPT: "RETRY_ATTEMPT",             // Cleaner submitted a retry inspection
+    RETRY_PASSED: "RETRY_PASSED",               // Retry score >= threshold
+    RETRY_FAILED: "RETRY_FAILED",               // Retry score < threshold
+    ESCALATION_ADVANCED: "ESCALATION_ADVANCED", // Tier promoted (Tier 1 -> 2 -> 3) by worker
+    SLA_RESOLVED: "SLA_RESOLVED",               // Escalation resolved
+    SLA_EXHAUSTED: "SLA_EXHAUSTED",             // Max retries reached without passing
+    NOTIFICATION_SENT: "NOTIFICATION_SENT"      // Push notification dispatched
+});
+
+

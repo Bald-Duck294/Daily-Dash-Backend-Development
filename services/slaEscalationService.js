@@ -2,7 +2,8 @@ import { getMessaging } from "firebase-admin/messaging";
 import { getApps } from "firebase-admin/app";
 import prisma from "../config/prismaClient.mjs";
 import { resolveEffectiveWashroomSLA } from "./slaConfigurationService.js";
-import { DEFAULT_ESCALATION_LEVELS } from "../constant/slaDefaults.js";
+import { DEFAULT_ESCALATION_LEVELS, SLA_EVENT_TYPES } from "../constant/slaDefaults.js";
+import { logEscalationEvent } from "./slaAuditLogService.js";
 
 /**
  * Helper to dispatch push notifications to target users via Firebase Admin
@@ -47,18 +48,18 @@ async function sendEscalationPushNotification({
         const roleLower = String(targetRole || "").toLowerCase();
 
         for (const a of assignments) {
-            if (roleLower.includes("cleaner") && a.cleaner_user?.id) {
+            if ((roleLower.includes("cleaner") || roleLower.includes("all")) && a.cleaner_user?.id) {
                 targetUserIds.add(a.cleaner_user.id);
                 if (a.cleaner_user.fcm_token) fallbackTokens.add(a.cleaner_user.fcm_token);
             }
-            if ((roleLower.includes("supervisor") || roleLower.includes("supv") || roleLower.includes("facility_supv")) && a.supervisor?.id) {
+            if ((roleLower.includes("supervisor") || roleLower.includes("supv") || roleLower.includes("facility_supv") || roleLower.includes("all")) && a.supervisor?.id) {
                 targetUserIds.add(a.supervisor.id);
                 if (a.supervisor.fcm_token) fallbackTokens.add(a.supervisor.fcm_token);
             }
         }
 
-        // If target role is admin/facility_admin, collect company admin user IDs
-        if ((roleLower.includes("admin") || roleLower.includes("facility_admin") || roleLower.includes("super_admin")) && companyId) {
+        // If target role is admin/facility_admin or all, collect company admin user IDs
+        if ((roleLower.includes("admin") || roleLower.includes("facility_admin") || roleLower.includes("super_admin") || roleLower.includes("all")) && companyId) {
             const adminUsers = await prisma.users.findMany({
                 where: {
                     company_id: BigInt(companyId),
@@ -76,7 +77,7 @@ async function sendEscalationPushNotification({
             });
         }
 
-        // ✅ ALWAYS notify all Super Admins across the platform during any escalation event
+        // ALWAYS notify all Super Admins across the platform during any escalation event
         const superAdmins = await prisma.users.findMany({
             where: {
                 OR: [
@@ -118,7 +119,7 @@ async function sendEscalationPushNotification({
         }
 
         const defaultTitle = `Cleaning Alert - ${locationName}`;
-        const defaultBody = `Cleanliness score for ${locationName} is ${score.toFixed(1)}/10 (Target: ${threshold}/10). Action required.`;
+        const defaultBody = `Cleanliness score for ${locationName} is ${score !== undefined && score !== null ? Number(score).toFixed(1) : "0"}/10 (Target: ${threshold}/10). Action required.`;
         const notificationTitle = title || defaultTitle;
         const notificationBody = body || defaultBody;
 
@@ -140,9 +141,9 @@ async function sendEscalationPushNotification({
                         escalationId: escalationId ? escalationId.toString() : "",
                         reviewId: reviewId ? reviewId.toString() : "",
                         locationId: locIdBigInt.toString(),
-                        level: String(level),
-                        score: score.toString(),
-                        threshold: threshold.toString()
+                        level: String(level || 1),
+                        score: score !== undefined && score !== null ? score.toString() : "0",
+                        threshold: threshold ? threshold.toString() : "0"
                     }
                 };
 
@@ -166,6 +167,24 @@ async function sendEscalationPushNotification({
         }
 
         console.log(`✅ [SLA ESCALATION] Sent ${successCount}/${targetTokens.size} push notifications for Level ${level} to role "${targetRole}".`);
+
+        // Record NOTIFICATION_SENT in SLA audit logs
+        if (escalationId && successCount > 0) {
+            await logEscalationEvent({
+                escalationId,
+                reviewId,
+                eventType: SLA_EVENT_TYPES.NOTIFICATION_SENT,
+                level,
+                score,
+                metadata: {
+                    targetRole,
+                    notificationType,
+                    title: notificationTitle,
+                    recipientsCount: successCount
+                }
+            });
+        }
+
         return { sent: true, count: successCount };
     } catch (error) {
         console.error("❌ [SLA ESCALATION] Error in sendEscalationPushNotification:", error);
@@ -174,13 +193,15 @@ async function sendEscalationPushNotification({
 }
 
 /**
- * Creates a new SLA Escalation record in the database when an SLA breach occurs.
+ * Creates a new SLA Escalation record when an initial SLA breach occurs.
  */
 export const createSlaEscalation = async ({
     review,
     effectiveSla,
     score,
-    threshold
+    threshold,
+    cleanerUserId,
+    businessDate
 }) => {
     try {
         const levels = Array.isArray(effectiveSla.configuration?.escalation?.levels) && effectiveSla.configuration.escalation.levels.length > 0
@@ -188,6 +209,7 @@ export const createSlaEscalation = async ({
             : DEFAULT_ESCALATION_LEVELS;
 
         const maxLevel = levels.length;
+        const maxRetries = Number(effectiveSla.configuration?.max_retry_attempts ?? 2);
         const now = new Date();
 
         // Calculate due_at for Level 2 (if exists) from inception
@@ -198,32 +220,56 @@ export const createSlaEscalation = async ({
         }
 
         console.log(`\n🚨 [SLA BREACH DETECTED] Creating Escalation Record for Review #${review.id}`);
-        console.log(`   Location ID: ${review.location_id} | Score: ${score}/${threshold}`);
-        console.log(`   Hierarchy Levels: ${maxLevel} | Level 2 Due At: ${dueAt ? dueAt.toISOString() : "None"}`);
+        console.log(`   Cleaner ID: ${cleanerUserId} | Location ID: ${review.location_id} | Score: ${score}/${threshold}`);
+        console.log(`   Business Date: ${businessDate?.toISOString().slice(0, 10)} | Max Retries: ${maxRetries}`);
 
         // 1. Create sla_escalations record
         const escalation = await prisma.sla_escalations.create({
             data: {
                 company_id: review.company_id,
                 location_id: review.location_id,
+                cleaner_user_id: BigInt(cleanerUserId),
+                business_date: businessDate,
                 triggered_by_review_id: review.id,
                 current_level: 1,
                 max_level: maxLevel,
                 state: "OPEN",
                 snapshot_hierarchy: levels,
+                retry_count: 0,
+                max_retries: maxRetries,
                 due_at: dueAt,
                 created_at: now,
                 updated_at: now
             }
         });
 
-        // 2. Link cleaner_review back to this escalation
+        // 2. Link cleaner_review back to this escalation and mark is_latest: true
         await prisma.cleaner_review.update({
             where: { id: review.id },
-            data: { escalation_id: escalation.id }
+            data: {
+                escalation_id: escalation.id,
+                review_type: "ORIGINAL",
+                attempt_no: 1,
+                is_latest: true
+            }
         });
 
-        // 3. Dispatch Level 1 Notification to assigned Cleaner
+        // 3. Log initial SLA_BREACH in audit logs
+        await logEscalationEvent({
+            escalationId: escalation.id,
+            reviewId: review.id,
+            actorUserId: cleanerUserId,
+            eventType: SLA_EVENT_TYPES.SLA_BREACH,
+            level: 1,
+            score,
+            metadata: {
+                threshold,
+                maxRetries,
+                businessDate: businessDate?.toISOString().slice(0, 10)
+            }
+        });
+
+        // 4. Dispatch Level 1 Notification to assigned Cleaner
         const level1Config = levels[0] || { target_role: "cleaner", send_notification: true };
         if (level1Config.send_notification !== false) {
             await sendEscalationPushNotification({
@@ -258,25 +304,66 @@ export const resolveSlaEscalation = async ({
     retryReviewId,
     locationName = "Washroom",
     companyId = null,
-    score = 0
+    score = 0,
+    actorUserId = null
 }) => {
     try {
         const escIdBigInt = BigInt(escalationId);
+        const retryReviewIdBigInt = BigInt(retryReviewId);
         const resolvedAt = new Date();
 
+        // 1. Mark escalation as RESOLVED
         const updated = await prisma.sla_escalations.update({
             where: { id: escIdBigInt },
             data: {
                 state: "RESOLVED",
-                resolved_by_review_id: BigInt(retryReviewId),
+                resolved_by_review_id: retryReviewIdBigInt,
                 resolved_at: resolvedAt,
                 due_at: null // Stops cron timer
             }
         });
 
+        // 2. Mark this passing review as is_latest: true, and older reviews in chain as false
+        await prisma.cleaner_review.updateMany({
+            where: {
+                OR: [
+                    { escalation_id: escIdBigInt },
+                    { id: updated.triggered_by_review_id }
+                ],
+                id: { not: retryReviewIdBigInt }
+            },
+            data: { is_latest: false }
+        });
+
+        await prisma.cleaner_review.update({
+            where: { id: retryReviewIdBigInt },
+            data: { is_latest: true }
+        });
+
         console.log(`🎉 [SLA RESTORED] Escalation #${escalationId} marked as RESOLVED by Review #${retryReviewId}`);
 
-        // Notify Cleaner & Supervisor of resolution
+        // 3. Log RETRY_PASSED and SLA_RESOLVED audit logs
+        await logEscalationEvent({
+            escalationId: updated.id,
+            reviewId: retryReviewIdBigInt,
+            actorUserId,
+            eventType: SLA_EVENT_TYPES.RETRY_PASSED,
+            level: updated.current_level,
+            score,
+            metadata: { resolvedAt: resolvedAt.toISOString() }
+        });
+
+        await logEscalationEvent({
+            escalationId: updated.id,
+            reviewId: retryReviewIdBigInt,
+            actorUserId,
+            eventType: SLA_EVENT_TYPES.SLA_RESOLVED,
+            level: updated.current_level,
+            score,
+            metadata: { resolvedAt: resolvedAt.toISOString() }
+        });
+
+        // 4. Notify Cleaner, Supervisor, Admin, and Super Admin of resolution
         await sendEscalationPushNotification({
             locationId: updated.location_id,
             locationName,
@@ -284,9 +371,9 @@ export const resolveSlaEscalation = async ({
             score,
             threshold: 0,
             level: updated.current_level,
-            targetRole: "cleaner",
+            targetRole: "all",
             escalationId: updated.id,
-            reviewId: retryReviewId,
+            reviewId: retryReviewIdBigInt,
             notificationType: "sla_restored",
             title: `Cleaning Completed - ${locationName}`,
             body: `${locationName} has been cleaned and inspected with score ${score.toFixed(1)}/10.`
@@ -301,15 +388,25 @@ export const resolveSlaEscalation = async ({
 
 /**
  * Marks an escalation as EXHAUSTED when max retries have been attempted without passing.
+ * Selects the highest scoring review in the chain as is_latest = true.
  */
 export const exhaustSlaEscalation = async ({
     escalationId,
     locationName = "Washroom",
     companyId = null,
-    score = 0
+    score = 0,
+    actorUserId = null
 }) => {
     try {
         const escIdBigInt = BigInt(escalationId);
+
+        const escalation = await prisma.sla_escalations.findUnique({
+            where: { id: escIdBigInt }
+        });
+
+        if (!escalation) {
+            throw new Error(`Escalation #${escalationId} not found`);
+        }
 
         const updated = await prisma.sla_escalations.update({
             where: { id: escIdBigInt },
@@ -321,7 +418,69 @@ export const exhaustSlaEscalation = async ({
 
         console.log(`⚠️ [SLA EXHAUSTED] Escalation #${escalationId} permanently failed. Retries exhausted.`);
 
-        // Critical failure alert to Admin / Supervisor
+        // --- HIGHEST SCORE SELECTION ON EXHAUSTION ---
+        // Fetch all reviews belonging to this escalation chain
+        const allChainReviews = await prisma.cleaner_review.findMany({
+            where: {
+                OR: [
+                    { escalation_id: escIdBigInt },
+                    { id: escalation.triggered_by_review_id }
+                ]
+            },
+            select: { id: true, score: true }
+        });
+
+        if (allChainReviews.length > 0) {
+            // Find review with the highest numeric score
+            let highestReview = allChainReviews[0];
+            for (const r of allChainReviews) {
+                const rScore = Number(r.score ?? 0);
+                const maxScore = Number(highestReview.score ?? 0);
+                if (rScore > maxScore) {
+                    highestReview = r;
+                }
+            }
+
+            // Designate the highest scoring review as is_latest: true
+            await prisma.cleaner_review.updateMany({
+                where: {
+                    OR: [
+                        { escalation_id: escIdBigInt },
+                        { id: escalation.triggered_by_review_id }
+                    ],
+                    id: { not: highestReview.id }
+                },
+                data: { is_latest: false }
+            });
+
+            await prisma.cleaner_review.update({
+                where: { id: highestReview.id },
+                data: { is_latest: true }
+            });
+
+            console.log(`🏆 [SLA EXHAUSTION] Set highest scoring Review #${highestReview.id} (Score: ${highestReview.score}) as is_latest = true.`);
+        }
+
+        // Log audit events
+        await logEscalationEvent({
+            escalationId: updated.id,
+            actorUserId,
+            eventType: SLA_EVENT_TYPES.RETRY_FAILED,
+            level: updated.current_level,
+            score,
+            metadata: { reason: "Max retries reached without passing threshold" }
+        });
+
+        await logEscalationEvent({
+            escalationId: updated.id,
+            actorUserId,
+            eventType: SLA_EVENT_TYPES.SLA_EXHAUSTED,
+            level: updated.current_level,
+            score,
+            metadata: { retryCount: updated.retry_count, maxRetries: updated.max_retries }
+        });
+
+        // Critical failure alert to Cleaner, Supervisor, Admin, and Super Admin
         await sendEscalationPushNotification({
             locationId: updated.location_id,
             locationName,
@@ -329,7 +488,7 @@ export const exhaustSlaEscalation = async ({
             score,
             threshold: 0,
             level: updated.current_level,
-            targetRole: "admin",
+            targetRole: "all",
             escalationId: updated.id,
             notificationType: "sla_exhausted",
             title: `Critical Alert - ${locationName}`,
@@ -339,6 +498,164 @@ export const exhaustSlaEscalation = async ({
         return updated;
     } catch (error) {
         console.error(`❌ [SLA EXHAUSTION] Error exhausting escalation #${escalationId}:`, error);
+        throw error;
+    }
+};
+
+/**
+ * Handles a retry inspection review when an active OPEN escalation exists.
+ */
+export const handleSlaRetry = async ({
+    review,
+    activeEscalation,
+    effectiveSla,
+    score,
+    threshold,
+    cleanerUserId
+}) => {
+    try {
+        const numericScore = Number(score);
+        const activeEscalationId = activeEscalation.id;
+        const currentRetryCount = Number(activeEscalation.retry_count || 0);
+        const newRetryCount = currentRetryCount + 1;
+        const maxRetries = Number(activeEscalation.max_retries ?? 2);
+        const attemptNo = newRetryCount + 1; // 1 is original, 2 is retry 1, etc.
+
+        console.log(`\n🔄 [SLA RETRY SUBMISSION] Review #${review.id} for Escalation #${activeEscalationId}`);
+        console.log(`   Attempt: ${attemptNo} | Retry Count: ${newRetryCount}/${maxRetries} | Score: ${numericScore.toFixed(1)} / Target: ${threshold}`);
+
+        // 1. Mark previous reviews in chain as is_latest = false, link current review as is_latest = true
+        await prisma.cleaner_review.updateMany({
+            where: {
+                OR: [
+                    { escalation_id: activeEscalationId },
+                    { id: activeEscalation.triggered_by_review_id }
+                ],
+                id: { not: review.id }
+            },
+            data: { is_latest: false }
+        });
+
+        await prisma.cleaner_review.update({
+            where: { id: review.id },
+            data: {
+                review_type: "RETRY",
+                attempt_no: attemptNo,
+                parent_review_id: activeEscalation.triggered_by_review_id,
+                escalation_id: activeEscalationId,
+                is_latest: true
+            }
+        });
+
+        // 2. Increment retry_count on the escalation
+        await prisma.sla_escalations.update({
+            where: { id: activeEscalationId },
+            data: {
+                retry_count: newRetryCount,
+                updated_at: new Date()
+            }
+        });
+
+        // 3. Log RETRY_ATTEMPT audit event
+        await logEscalationEvent({
+            escalationId: activeEscalationId,
+            reviewId: review.id,
+            actorUserId: cleanerUserId,
+            eventType: SLA_EVENT_TYPES.RETRY_ATTEMPT,
+            level: activeEscalation.current_level,
+            score: numericScore,
+            metadata: {
+                attemptNo,
+                retryCount: newRetryCount,
+                maxRetries,
+                threshold
+            }
+        });
+
+        // =========================================================================
+        // PATH A: RETRY PASSED (Score >= Threshold)
+        // =========================================================================
+        if (numericScore >= threshold) {
+            await resolveSlaEscalation({
+                escalationId: activeEscalationId,
+                retryReviewId: review.id,
+                locationName: effectiveSla.location_name || "Washroom",
+                companyId: review.company_id,
+                score: numericScore,
+                actorUserId: cleanerUserId
+            });
+
+            return {
+                evaluated: true,
+                breached: false,
+                status: "RESOLVED",
+                escalationId: activeEscalationId.toString()
+            };
+        }
+
+        // =========================================================================
+        // PATH B: RETRY FAILED (Score < Threshold)
+        // =========================================================================
+        console.log(`⚠️ [SLA RETRY FAILED] Attempt ${attemptNo} failed with score ${numericScore.toFixed(1)} < ${threshold}`);
+
+        if (newRetryCount >= maxRetries) {
+            // Max allowed retries reached -> EXHAUST escalation
+            await exhaustSlaEscalation({
+                escalationId: activeEscalationId,
+                locationName: effectiveSla.location_name || "Washroom",
+                companyId: review.company_id,
+                score: numericScore,
+                actorUserId: cleanerUserId
+            });
+
+            return {
+                evaluated: true,
+                breached: true,
+                status: "EXHAUSTED",
+                escalationId: activeEscalationId.toString()
+            };
+        }
+
+        // Retries still remain: log failure, notify cleaner, keep escalation OPEN
+        await logEscalationEvent({
+            escalationId: activeEscalationId,
+            reviewId: review.id,
+            actorUserId: cleanerUserId,
+            eventType: SLA_EVENT_TYPES.RETRY_FAILED,
+            level: activeEscalation.current_level,
+            score: numericScore,
+            metadata: {
+                attemptNo,
+                retryCount: newRetryCount,
+                maxRetries,
+                remainingRetries: maxRetries - newRetryCount
+            }
+        });
+
+        // Send retry failure notice to cleaner
+        await sendEscalationPushNotification({
+            locationId: review.location_id,
+            locationName: effectiveSla.location_name || "Washroom",
+            companyId: review.company_id,
+            score: numericScore,
+            threshold,
+            level: activeEscalation.current_level,
+            targetRole: "cleaner",
+            escalationId: activeEscalationId,
+            reviewId: review.id,
+            notificationType: "sla_retry_failed",
+            title: `Retry Incomplete - ${effectiveSla.location_name || "Washroom"}`,
+            body: `Score is ${numericScore.toFixed(1)}/10 (Target: ${threshold}/10). ${maxRetries - newRetryCount} retry attempt(s) remaining.`
+        });
+
+        return {
+            evaluated: true,
+            breached: true,
+            status: "RETRY_FAILED_STILL_OPEN",
+            escalationId: activeEscalationId.toString()
+        };
+    } catch (error) {
+        console.error("❌ [SLA RETRY ERROR]:", error);
         throw error;
     }
 };
@@ -398,6 +715,17 @@ export const advanceEscalationLevel = async (escalationId) => {
 
         console.log(`⚡ [SLA ESCALATION ADVANCED] Escalation #${escalationId}: Level ${currentLevel} ➔ Level ${nextLevel} (Role: ${nextTargetRole})`);
 
+        // Log ESCALATION_ADVANCED audit event
+        await logEscalationEvent({
+            escalationId: updated.id,
+            eventType: SLA_EVENT_TYPES.ESCALATION_ADVANCED,
+            level: nextLevel,
+            metadata: {
+                previousLevel: currentLevel,
+                targetRole: nextTargetRole
+            }
+        });
+
         // Dispatch Tier notification
         if (nextLevelConfig.send_notification !== false) {
             await sendEscalationPushNotification({
@@ -425,6 +753,8 @@ export const advanceEscalationLevel = async (escalationId) => {
 
 /**
  * Main evaluation entrypoint after AI hygiene scoring.
+ * Enforces cleaner identity guard clause, calculates business_date in IST,
+ * and auto-correlates reviews to active OPEN escalations.
  */
 export const evaluateReviewSla = async ({
     reviewId,
@@ -452,11 +782,14 @@ export const evaluateReviewSla = async ({
                 id: true,
                 company_id: true,
                 location_id: true,
+                cleaner_user_id: true,
+                created_at: true,
                 score: true,
                 review_type: true,
                 attempt_no: true,
                 escalation_id: true,
-                parent_review_id: true
+                parent_review_id: true,
+                is_latest: true
             }
         });
 
@@ -464,153 +797,92 @@ export const evaluateReviewSla = async ({
             return { evaluated: false, reason: "Review record not found" };
         }
 
+        // =========================================================================
+        // FOUNDATIONAL RULE: CLEANER IDENTITY GUARD CLAUSE
+        // =========================================================================
+        if (!review.cleaner_user_id) {
+            console.warn(`⚠️ [SLA] Review #${reviewIdBigInt} has no cleaner_user_id. Skipping SLA evaluation (anonymous/unattributed review).`);
+            return { evaluated: false, reason: "NO_CLEANER_USER_ID" };
+        }
+
+        const cleanerUserId = review.cleaner_user_id;
         const effectiveCompanyId = companyId || review.company_id;
 
-        // 2. Resolve effective washroom SLA (checks Company Master Switch & Washroom overrides)
+        // 2. Resolve effective washroom SLA
         const effectiveSla = await resolveEffectiveWashroomSLA(locIdBigInt, effectiveCompanyId);
 
         if (!effectiveSla || !effectiveSla.enabled) {
-            console.log(`ℹ️ [SLA EVALUATION] SLA is inactive for location #${locIdBigInt} (${effectiveSla?.reason || "DISABLED"}).`);
             return { evaluated: true, breached: false, reason: effectiveSla?.reason || "SLA_DISABLED" };
         }
 
         const threshold = Number(effectiveSla.threshold ?? 8.0);
-        const maxRetries = Number(effectiveSla.configuration?.max_retry_attempts ?? 2);
-        const reviewType = (review.review_type || "ORIGINAL").toUpperCase();
 
-        console.log(`\n🔍 [SLA EVALUATION] Review #${reviewIdBigInt} (${reviewType}) | Score: ${numericScore.toFixed(1)} / Threshold: ${threshold}`);
+        // 3. Compute business_date in Indian Standard Time (UTC+5:30)
+        const reviewCreatedAt = review.created_at ? new Date(review.created_at) : new Date();
+        const istOffsetMs = 5.5 * 60 * 60 * 1000;
+        const istDate = new Date(reviewCreatedAt.getTime() + istOffsetMs);
+        const businessDate = new Date(Date.UTC(istDate.getUTCFullYear(), istDate.getUTCMonth(), istDate.getUTCDate()));
+
+        console.log(`\n🔍 [SLA EVALUATION] Review #${reviewIdBigInt} | Cleaner #${cleanerUserId} | Location #${locIdBigInt}`);
+        console.log(`   Business Date (IST): ${businessDate.toISOString().slice(0, 10)} | Score: ${numericScore.toFixed(1)} / Threshold: ${threshold}`);
+
+        // 4. Check if an active OPEN escalation exists for (cleaner_user_id + location_id + business_date)
+        const activeEscalation = await prisma.sla_escalations.findFirst({
+            where: {
+                cleaner_user_id: cleanerUserId,
+                location_id: locIdBigInt,
+                business_date: businessDate,
+                state: "OPEN"
+            }
+        });
 
         // =========================================================================
-        // CASE A: ORIGINAL REVIEW
+        // SCENARIO 1: ACTIVE OPEN ESCALATION EXISTS -> AUTOMATIC RETRY FLOW
         // =========================================================================
-        if (reviewType === "ORIGINAL") {
-            if (numericScore >= threshold) {
-                console.log(`✅ [SLA PASS] Review #${reviewIdBigInt} meets threshold (${numericScore.toFixed(1)} >= ${threshold}).`);
-                
-                // If this review was linked to an open escalation, resolve it
-                if (review.escalation_id) {
-                    const openEsc = await prisma.sla_escalations.findUnique({
-                        where: { id: review.escalation_id }
-                    });
-                    if (openEsc && openEsc.state === "OPEN") {
-                        await resolveSlaEscalation({
-                            escalationId: openEsc.id,
-                            retryReviewId: review.id,
-                            locationName: effectiveSla.location_name || "Washroom",
-                            companyId: effectiveCompanyId,
-                            score: numericScore
-                        });
-                        return {
-                            evaluated: true,
-                            breached: false,
-                            status: "RESOLVED",
-                            escalationId: openEsc.id.toString()
-                        };
-                    }
-                }
-
-                return { evaluated: true, breached: false, status: "PASS", score: numericScore, threshold };
-            }
-
-            // SLA BREACH OCCURRED
-            // Check if an active OPEN escalation already exists for this washroom
-            const existingOpenEscalation = await prisma.sla_escalations.findFirst({
-                where: {
-                    location_id: locIdBigInt,
-                    state: "OPEN"
-                }
-            });
-
-            if (existingOpenEscalation) {
-                console.log(`ℹ️ [SLA NOTICE] Washroom #${locIdBigInt} already has an active OPEN escalation (#${existingOpenEscalation.id}). Linking review without creating duplicate.`);
-                await prisma.cleaner_review.update({
-                    where: { id: reviewIdBigInt },
-                    data: { escalation_id: existingOpenEscalation.id }
-                });
-                return {
-                    evaluated: true,
-                    breached: true,
-                    status: "EXISTING_OPEN_ESCALATION",
-                    escalationId: existingOpenEscalation.id.toString()
-                };
-            }
-
-            // Create new escalation
-            const newEscalation = await createSlaEscalation({
+        if (activeEscalation) {
+            console.log(`🎯 [SLA RETRY DETECTED] Found active OPEN Escalation #${activeEscalation.id}. Processing as RETRY.`);
+            return await handleSlaRetry({
                 review,
+                activeEscalation,
                 effectiveSla,
                 score: numericScore,
-                threshold
+                threshold,
+                cleanerUserId
             });
-
-            return {
-                evaluated: true,
-                breached: true,
-                status: "ESCALATION_CREATED",
-                escalationId: newEscalation.id.toString()
-            };
         }
 
         // =========================================================================
-        // CASE B: CORRECTIVE RETRY REVIEW (review_type === "RETRY")
+        // SCENARIO 2: NO OPEN ESCALATION -> ORIGINAL REVIEW FLOW
         // =========================================================================
-        if (reviewType === "RETRY") {
-            const activeEscalationId = review.escalation_id;
-
-            if (!activeEscalationId) {
-                console.warn(`⚠️ [SLA RETRY] Review #${reviewIdBigInt} marked as RETRY but has no escalation_id.`);
-                return { evaluated: true, breached: numericScore < threshold, status: "RETRY_NO_ESCALATION_LINK" };
-            }
-
-            // Path A: Retry Score Passed!
-            if (numericScore >= threshold) {
-                await resolveSlaEscalation({
-                    escalationId: activeEscalationId,
-                    retryReviewId: review.id,
-                    locationName: effectiveSla.location_name || "Washroom",
-                    companyId: effectiveCompanyId,
-                    score: numericScore
-                });
-
-                return {
-                    evaluated: true,
-                    breached: false,
-                    status: "RESOLVED",
-                    escalationId: activeEscalationId.toString()
-                };
-            }
-
-            // Path B: Retry Score Still Below Threshold
-            const attemptNo = Number(review.attempt_no || 2);
-            console.log(`⚠️ [SLA RETRY FAILED] Attempt ${attemptNo}/${maxRetries} failed with score ${numericScore.toFixed(1)} < ${threshold}`);
-
-            if (attemptNo >= maxRetries) {
-                // Max retries exhausted
-                await exhaustSlaEscalation({
-                    escalationId: activeEscalationId,
-                    locationName: effectiveSla.location_name || "Washroom",
-                    companyId: effectiveCompanyId,
-                    score: numericScore
-                });
-
-                return {
-                    evaluated: true,
-                    breached: true,
-                    status: "EXHAUSTED",
-                    escalationId: activeEscalationId.toString()
-                };
-            }
-
-            // Retries still remain: escalation stays OPEN for another attempt
-            return {
-                evaluated: true,
-                breached: true,
-                status: "RETRY_FAILED_STILL_OPEN",
-                escalationId: activeEscalationId.toString()
-            };
+        if (numericScore >= threshold) {
+            console.log(`✅ [SLA PASS] Original Review #${reviewIdBigInt} meets threshold (${numericScore.toFixed(1)} >= ${threshold}).`);
+            await prisma.cleaner_review.update({
+                where: { id: reviewIdBigInt },
+                data: {
+                    review_type: "ORIGINAL",
+                    attempt_no: 1,
+                    is_latest: true
+                }
+            });
+            return { evaluated: true, breached: false, status: "PASS", score: numericScore, threshold };
         }
 
-        return { evaluated: true, status: "UNKNOWN_REVIEW_TYPE" };
+        // Score failed threshold -> CREATE NEW ESCALATION
+        const newEscalation = await createSlaEscalation({
+            review,
+            effectiveSla,
+            score: numericScore,
+            threshold,
+            cleanerUserId,
+            businessDate
+        });
+
+        return {
+            evaluated: true,
+            breached: true,
+            status: "ESCALATION_CREATED",
+            escalationId: newEscalation.id.toString()
+        };
     } catch (error) {
         console.error("❌ [SLA EVALUATION ERROR]:", error);
         return { evaluated: false, error: error.message };
