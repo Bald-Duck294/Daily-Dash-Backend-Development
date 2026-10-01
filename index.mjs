@@ -35,6 +35,7 @@ import ai_insights_Router from "./routes/aiInsightRoute.js";
 import slaConfigRoutes from "./routes/slaConfigRoutes.js";
 import userReviewQrRoutes from "./routes/userReviewQrRoutes.js";
 import slaLogsRoutes from "./routes/slaLogsRoutes.js";
+import slaCronRoutes from "./routes/slaCronRoutes.js";
 import { startSlaEscalationWorker } from "./workers/slaEscalationWorker.js";
 dotenv.config();
 
@@ -143,6 +144,7 @@ app.use("/uploads", express.static("uploads"));
 app.use("/api/ai-insights", ai_insights_Router);
 app.use("/api/sla-config", slaConfigRoutes);
 app.use("/api/sla-logs", slaLogsRoutes);
+app.use("/api/sla-cron", slaCronRoutes);
 // app.use("/api", registered_users_router);
 
 app.use((err, req, res, next) => {
