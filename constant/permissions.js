@@ -11,6 +11,7 @@ export const MODULES = {
     CLEANER_REVIEWS: 'cleaner_reviews',
     SCORE_MANAGEMENT: 'score_management',
     ROLE_MANAGEMENT: 'role_management',
+    SLA_MANAGEMENT: 'sla_management',
 };
 
 export const ACTIONS = {
@@ -75,6 +76,12 @@ export const VALID_PERMISSIONS = [
     'role_management.add',
     'role_management.update',
     'role_management.delete',
+
+    // SLA Management
+    'sla_management.view',
+    'sla_management.add',
+    'sla_management.update',
+    'sla_management.delete',
 ];
 
 // System roles that cannot be deleted (IDs 1-4)
@@ -180,6 +187,17 @@ export const MODULE_CONFIG = [
             'role_management.add',
             'role_management.update',
             'role_management.delete',
+        ],
+    },
+    {
+        key: MODULES.SLA_MANAGEMENT,
+        label: 'SLA Management',
+        description: 'Configure and monitor SLA thresholds, escalations, and incident logs',
+        permissions: [
+            'sla_management.view',
+            'sla_management.add',
+            'sla_management.update',
+            'sla_management.delete',
         ],
     },
 ];

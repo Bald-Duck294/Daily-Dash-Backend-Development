@@ -10,6 +10,8 @@ import {
   getCleanerReviews,
   createDemoCleanerReview,
   updateManagementScore,
+  getSlaCleanerActivities,
+  getSlaCleanerActivityById,
 } from "../controller/cleanerReviewController.js";
 // import { upload, processAndUploadImages } from "../middleware/imageUpload.js";
 import { upload, processAndUploadImages } from "../middlewares/imageUpload.js";
@@ -25,6 +27,8 @@ const debugFields = (req, res, next) => {
 };
 
 // Routes
+clean_review_Router.get("/sla-activities", getSlaCleanerActivities);
+clean_review_Router.get("/sla-activities/:activity_id", getSlaCleanerActivityById);
 clean_review_Router.get("/", getCleanerReview);
 clean_review_Router.get("/paginated", getCleanerReviews);
 clean_review_Router.get("/:cleaner_user_id", getCleanerReviewsById);

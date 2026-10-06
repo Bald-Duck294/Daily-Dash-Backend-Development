@@ -1,8 +1,88 @@
-// import prisma from "../config/database.js";
 import prisma from "../config/prismaClient.mjs";
 import RBACFilterService from "../utils/rbacFilterService.js";
-
 import { serializeBigInt } from "../utils/serializer.js";
+import { getCompanySLAConfiguration } from "../services/slaConfigurationService.js";
+
+/**
+ * Builds SLA-aware conditions for cleaner_review queries in reports.
+ * - If company SLA is OFF: returns standard/legacy filter (no is_latest restriction).
+ * - If company SLA is ON:
+ *    - Washrooms with SLA ON => requires is_latest: true
+ *    - Washrooms with SLA OFF => standard filter without is_latest restriction
+ */
+const buildSlaAwareReviewFilter = async (companyId, locations = []) => {
+  if (!companyId || !locations || locations.length === 0) {
+    return { isSlaActive: false, slaWhereCondition: {} };
+  }
+
+  try {
+    const companySla = await getCompanySLAConfiguration(companyId);
+    const isCompanySlaOn = Boolean(companySla?.enabled);
+
+    if (!isCompanySlaOn) {
+      return {
+        isSlaActive: false,
+        slaWhereCondition: {},
+      };
+    }
+
+    const slaOnLocationIds = [];
+    const slaOffLocationIds = [];
+
+    for (const loc of locations) {
+      const locSla =
+        loc.sla_config && typeof loc.sla_config === "object"
+          ? loc.sla_config
+          : null;
+      const isWashroomExplicitlyOff =
+        locSla && (locSla.enabled === false || locSla.is_active === false);
+
+      if (isWashroomExplicitlyOff) {
+        slaOffLocationIds.push(loc.id);
+      } else {
+        slaOnLocationIds.push(loc.id);
+      }
+    }
+
+    // Case 1: All locations have SLA ON
+    if (slaOffLocationIds.length === 0) {
+      return {
+        isSlaActive: true,
+        slaWhereCondition: {
+          is_latest: true,
+        },
+      };
+    }
+
+    // Case 2: All locations have SLA OFF
+    if (slaOnLocationIds.length === 0) {
+      return {
+        isSlaActive: false,
+        slaWhereCondition: {},
+      };
+    }
+
+    // Case 3: Mixed locations
+    return {
+      isSlaActive: true,
+      slaWhereCondition: {
+        OR: [
+          {
+            location_id: { in: slaOnLocationIds },
+            is_latest: true,
+          },
+          {
+            location_id: { in: slaOffLocationIds },
+          },
+        ],
+      },
+    };
+  } catch (error) {
+    console.error("Error evaluating SLA config in reports:", error);
+    return { isSlaActive: false, slaWhereCondition: {} };
+  }
+};
+
 export const getZoneWiseReport = async (req, res) => {
   try {
     const { company_id, type_id, start_date, end_date, fields, review_filter } =
@@ -98,16 +178,25 @@ export const getZoneWiseReport = async (req, res) => {
     // Get location IDs from RBAC-filtered locations
     const locationIds = locations.map((loc) => loc.id);
 
+    // ✅ Evaluate SLA-aware filter for cleaner reviews
+    const { slaWhereCondition } = await buildSlaAwareReviewFilter(
+      company_id,
+      locations,
+    );
+
+    const finalReviewWhere = {
+      ...reviewWhereClause,
+      ...slaWhereCondition,
+    };
+    if (!slaWhereCondition.OR) {
+      finalReviewWhere.location_id = {
+        in: locationIds, // ✅ Restricts by RBAC-filtered locations
+      };
+    }
+
     // ✅ Fetch reviews for RBAC-filtered locations only
-    // If supervisor: only gets reviews for their assigned cleaners' locations
-    // If admin: gets all reviews
     const cleanerReviews = await prisma.cleaner_review.findMany({
-      where: {
-        ...reviewWhereClause,
-        location_id: {
-          in: locationIds, // ✅ This restricts by RBAC-filtered locations
-        },
-      },
+      where: finalReviewWhere,
       include: {
         cleaner_user: {
           select: {
@@ -464,7 +553,7 @@ export const getDailyCleaningReport = async (req, res) => {
 
     const allowedLocations = await prisma.locations.findMany({
       where: locationWhereClause,
-      select: { id: true },
+      select: { id: true, sla_config: true },
     });
 
     const allowedLocationIds = allowedLocations.map((loc) => loc.id);
@@ -493,11 +582,21 @@ export const getDailyCleaningReport = async (req, res) => {
       });
     }
 
+    // ✅ Evaluate SLA-aware filter for cleaner reviews
+    const { slaWhereCondition } = await buildSlaAwareReviewFilter(
+      company_id,
+      allowedLocations,
+    );
+
     // ✅ STEP 2: Build WHERE clause for cleaner_review with RBAC location filter
     const whereClause = {
       company_id: BigInt(company_id),
-      location_id: { in: allowedLocationIds }, // ✅ Only RBAC-filtered locations
+      ...slaWhereCondition,
     };
+
+    if (!slaWhereCondition.OR) {
+      whereClause.location_id = { in: allowedLocationIds }; // ✅ Only RBAC-filtered locations
+    }
 
     if (cleaner_id) whereClause.cleaner_user_id = BigInt(cleaner_id);
     if (status_filter && status_filter !== "all")
@@ -748,7 +847,7 @@ export const getWashroomReport = async (req, res) => {
 
     const allowedLocations = await prisma.locations.findMany({
       where: locationWhereClause,
-      select: { id: true },
+      select: { id: true, sla_config: true },
     });
 
     const allowedLocationIds = allowedLocations.map((loc) => loc.id);
@@ -780,14 +879,24 @@ export const getWashroomReport = async (req, res) => {
 
     console.log(`📊 Report Type: ${reportType}`);
 
+    // ✅ Evaluate SLA-aware filter for cleaner reviews
+    const { slaWhereCondition } = await buildSlaAwareReviewFilter(
+      company_id,
+      allowedLocations,
+    );
+
     // ✅ STEP 2: Build WHERE clause for cleaner_review (with RBAC location filter)
     const whereClause = {
       company_id: BigInt(company_id),
-      location_id: { in: allowedLocationIds }, // ✅ Only RBAC-filtered locations
+      ...slaWhereCondition,
       ...(cleaner_id && { cleaner_user_id: BigInt(cleaner_id) }),
       ...(status_filter &&
         status_filter !== "all" && { status: status_filter }),
     };
+
+    if (!slaWhereCondition.OR) {
+      whereClause.location_id = { in: allowedLocationIds }; // ✅ Only RBAC-filtered locations
+    }
 
     // Date range filtering with proper validation
     if (start_date || end_date) {
@@ -1312,7 +1421,7 @@ export const getCleanerReport = async (req, res) => {
 
     const allowedLocations = await prisma.locations.findMany({
       where: locationWhereClause,
-      select: { id: true },
+      select: { id: true, sla_config: true },
     });
 
     const allowedLocationIds = allowedLocations.map((loc) => loc.id);
@@ -1334,14 +1443,24 @@ export const getCleanerReport = async (req, res) => {
       });
     }
 
+    // ✅ Evaluate SLA-aware filter for cleaner reviews
+    const { slaWhereCondition } = await buildSlaAwareReviewFilter(
+      company_id,
+      allowedLocations,
+    );
+
     // ✅ STEP 2: Build WHERE clause for cleaner_review (with RBAC location filter)
     const whereClause = {
       company_id: BigInt(company_id),
-      location_id: { in: allowedLocationIds }, // ✅ Only RBAC-filtered locations
+      ...slaWhereCondition,
       ...(cleaner_id && { cleaner_user_id: BigInt(cleaner_id) }),
       ...(status_filter &&
         status_filter !== "all" && { status: status_filter }),
     };
+
+    if (!slaWhereCondition.OR) {
+      whereClause.location_id = { in: allowedLocationIds }; // ✅ Only RBAC-filtered locations
+    }
 
     // Date range filtering
     if (start_date || end_date) {
@@ -1840,7 +1959,7 @@ export const getDetailedCleaningReport = async (req, res) => {
 
     const allowedLocations = await prisma.locations.findMany({
       where: locationWhereClause,
-      select: { id: true },
+      select: { id: true, sla_config: true },
     });
 
     const allowedLocationIds = allowedLocations.map((loc) => loc.id);
@@ -1875,11 +1994,21 @@ export const getDetailedCleaningReport = async (req, res) => {
       });
     }
 
+    // ✅ Evaluate SLA-aware filter for cleaner reviews
+    const { slaWhereCondition } = await buildSlaAwareReviewFilter(
+      company_id,
+      allowedLocations,
+    );
+
     // ✅ STEP 2: Build WHERE clause with RBAC location filter
     const whereClause = {
       company_id: BigInt(company_id),
-      location_id: { in: allowedLocationIds }, // ✅ Only RBAC-filtered locations
+      ...slaWhereCondition,
     };
+
+    if (!slaWhereCondition.OR) {
+      whereClause.location_id = { in: allowedLocationIds }; // ✅ Only RBAC-filtered locations
+    }
 
     if (cleaner_id) whereClause.cleaner_user_id = BigInt(cleaner_id);
     if (status_filter && status_filter !== "all")
@@ -2317,36 +2446,51 @@ export const getWashroomDailyScoresReport = async (req, res) => {
       });
     });
 
-    // ✅ STEP 4: Fetch hygiene scores for date range
-    const hygieneScores = await prisma.hygiene_scores.findMany({
-      where: {
-        location_id: { in: washroomIds },
-        inspected_at: {
-          gte: startDateTime,
-          lte: endDateTime,
-        },
+    // ✅ STEP 4: Build SLA-aware filter and fetch cleaner reviews for date range
+    const { slaWhereCondition } = await buildSlaAwareReviewFilter(
+      company_id,
+      washrooms,
+    );
+
+    const reviewWhere = {
+      company_id: BigInt(company_id),
+      status: "completed",
+      created_at: {
+        gte: startDateTime,
+        lte: endDateTime,
       },
+      ...slaWhereCondition,
+    };
+
+    if (!slaWhereCondition.OR) {
+      reviewWhere.location_id = { in: washroomIds };
+    }
+
+    const reviews = await prisma.cleaner_review.findMany({
+      where: reviewWhere,
       select: {
         location_id: true,
         score: true,
-        inspected_at: true,
+        created_at: true,
       },
       orderBy: {
-        inspected_at: "asc",
+        created_at: "desc",
       },
     });
 
-    console.log(`📊 Found ${hygieneScores.length} hygiene score records`);
+    console.log(
+      `📊 Found ${reviews.length} cleaner review records for daily scores`,
+    );
 
     // ✅ STEP 5: Group scores by location + date, keep ALL scores for overall average
     const scoresByLocationAndDate = new Map();
-    const allScoresByLocation = new Map(); // NEW: Track all scores per washroom
+    const allScoresByLocation = new Map(); // Track all scores per washroom
 
-    hygieneScores.forEach((record) => {
+    reviews.forEach((record) => {
       if (!record.location_id || record.score == null) return;
 
       const locId = record.location_id.toString();
-      const dateStr = new Date(record.inspected_at).toISOString().split("T")[0];
+      const dateStr = new Date(record.created_at).toISOString().split("T")[0];
       const key = `${locId}_${dateStr}`;
 
       // Store all scores with timestamps for that location + date
@@ -2356,18 +2500,16 @@ export const getWashroomDailyScoresReport = async (req, res) => {
 
       scoresByLocationAndDate.get(key).push({
         score: Number(record.score),
-        timestamp: record.inspected_at,
+        timestamp: record.created_at,
       });
 
-      // NEW: Track all scores for this location (for overall average)
+      // Track all scores for this location (for overall average)
       if (!allScoresByLocation.has(locId)) {
         allScoresByLocation.set(locId, []);
       }
       allScoresByLocation.get(locId).push(Number(record.score));
     });
 
-    console.log(scoresByLocationAndDate, "by score and date before");
-    console.log(allScoresByLocation, "by allScores by location before");
     // NEW: Get LATEST score per location per day (not average)
     const latestScorePerDay = new Map();
     scoresByLocationAndDate.forEach((scores, key) => {
@@ -3164,171 +3306,3 @@ export const getAvailableZones = async (req, res) => {
   }
 };
 
-
-
-// ✅ GET /api/reports/washroom-average
-export const getWashroomAverageReport = async (req, res) => {
-  try {
-    const { company_id, location_id, date, start_date, end_date } = req.query;
-    const user = req.user;
-
-    if (!company_id) {
-      return res.status(400).json({ status: "error", message: "company_id is required" });
-    }
-
-    // 1. RBAC and Location Filters
-    const locationWhereClause = {
-      company_id: BigInt(company_id),
-      deleted_at: null,
-    };
-
-    const roleFilter = await RBACFilterService.getLocationFilter(user, "washroom_average_report");
-    Object.assign(locationWhereClause, roleFilter);
-
-    if (location_id && location_id !== "undefined") {
-      locationWhereClause.id = BigInt(location_id);
-    }
-
-    const locations = await prisma.locations.findMany({
-      where: locationWhereClause,
-      select: { id: true, name: true, type_id: true }
-    });
-
-    if (locations.length === 0) {
-      return res.status(200).json({ status: "success", data: [], message: "No locations found" });
-    }
-
-    const locIds = locations.map(l => l.id);
-
-    // 2. Determine Date Filters for "Total"
-    let totalStart = null;
-    let totalEnd = null;
-    if (start_date && start_date !== "undefined") {
-      totalStart = new Date(start_date);
-      totalStart.setHours(0, 0, 0, 0);
-    }
-    if (end_date && end_date !== "undefined") {
-      totalEnd = new Date(end_date);
-      totalEnd.setHours(23, 59, 59, 999);
-    }
-
-    const dateFilter = {};
-    if (totalStart || totalEnd) {
-      dateFilter.created_at = {};
-      if (totalStart) dateFilter.created_at.gte = totalStart;
-      if (totalEnd) dateFilter.created_at.lte = totalEnd;
-    }
-
-    // Determine "Today" filter (use end_date if provided, else date, else actual today)
-    const targetDayDate = end_date && end_date !== "undefined" ? end_date : (date || new Date());
-    const todayStart = new Date(targetDayDate);
-    todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = new Date(todayStart);
-    todayEnd.setHours(23, 59, 59, 999);
-
-    // 3. Fetch Data WITH Date Filtering
-    const cleanerReviews = await prisma.cleaner_review.findMany({
-      where: { location_id: { in: locIds }, ...dateFilter },
-      include: { cleaner_user: { select: { role_id: true } } }
-    });
-
-    const userReviews = await prisma.user_review_qr.findMany({
-      where: { location_id: { in: locIds }, ...dateFilter }
-    });
-
-    // 4. Calculate Data per Location
-    const reportData = locations.map(loc => {
-      const locId = loc.id.toString();
-
-      // Filter tasks for this location
-      const locTasks = cleanerReviews.filter(t => t.location_id?.toString() === locId);
-      const locFeedbacks = userReviews.filter(r => r.location_id?.toString() === locId);
-
-      // Distinguish Cleaning Activity (role 5) vs Inspection (role 4)
-      const cleaningActivities = locTasks.filter(t => t.cleaner_user?.role_id === 5);
-      const inspections = locTasks.filter(t => t.cleaner_user?.role_id !== 5); // Supervisor/Admin inspections
-
-      // Calculate Counts
-      const cleaningActivityCount = cleaningActivities.length;
-      const inspectionCount = inspections.length;
-      const userFeedbackCount = locFeedbacks.length;
-
-      // Last Activity Date
-      let lastActivity = null;
-      const allDates = [
-        ...locTasks.map(t => new Date(t.created_at).getTime()),
-        ...locFeedbacks.map(f => new Date(f.created_at).getTime())
-      ].filter(d => !isNaN(d));
-
-      if (allDates.length > 0) {
-        lastActivity = new Date(Math.max(...allDates)).toISOString();
-      }
-
-      // --- Calculate Scores ---
-      const calculateAvg = (items, scoreField) => {
-        const valid = items.filter(i => i[scoreField] !== null && i[scoreField] !== undefined);
-        if (valid.length === 0) return 0;
-        return valid.reduce((sum, item) => sum + Number(item[scoreField]), 0) / valid.length;
-      };
-
-      // TOTAL AVERAGES (Uses all fetched data, which is already filtered by start_date / end_date)
-      const totalCleaningAvg = calculateAvg(cleaningActivities, "score");
-      const totalInspectionAvg = calculateAvg(inspections, "score");
-      const totalFeedbackAvg = calculateAvg(locFeedbacks, "ai_score");
-
-      // TODAY'S AVERAGES (Strictly filters for the 'target day' which is usually the end_date)
-      const todayCleaning = cleaningActivities.filter(t => new Date(t.created_at) >= todayStart && new Date(t.created_at) <= todayEnd);
-      const todayInspections = inspections.filter(t => new Date(t.created_at) >= todayStart && new Date(t.created_at) <= todayEnd);
-      const todayFeedbacks = locFeedbacks.filter(f => new Date(f.created_at) >= todayStart && new Date(f.created_at) <= todayEnd);
-
-      const todayCleaningAvg = calculateAvg(todayCleaning, "score");
-      const todayInspectionAvg = calculateAvg(todayInspections, "score");
-      const todayFeedbackAvg = calculateAvg(todayFeedbacks, "ai_score");
-
-      // Weighted Shift Formula
-      // Assuming equal weights for now: 33% each (if category exists)
-      const calculateWeighted = (cAvg, iAvg, fAvg) => {
-        let totalScore = 0;
-        let weightSum = 0;
-
-        if (cAvg > 0) { totalScore += (cAvg * 0.4); weightSum += 0.4; }
-        if (iAvg > 0) { totalScore += (iAvg * 0.3); weightSum += 0.3; }
-        if (fAvg > 0) { totalScore += (fAvg * 0.3); weightSum += 0.3; }
-
-        if (weightSum === 0) return 0;
-        // Normalize back to 10 point scale
-        return (totalScore / weightSum).toFixed(2);
-      };
-
-      const totalAverage = calculateWeighted(totalCleaningAvg, totalInspectionAvg, totalFeedbackAvg);
-      const todaysAverage = calculateWeighted(todayCleaningAvg, todayInspectionAvg, todayFeedbackAvg);
-
-      return {
-        location_id: locId,
-        washroom_name: loc.name,
-        cleaning_activity_count: cleaningActivityCount,
-        inspection_count: inspectionCount,
-        user_feedback_count: userFeedbackCount,
-        todays_average: parseFloat(todaysAverage),
-        total_average: parseFloat(totalAverage),
-        last_activity: lastActivity,
-      };
-    });
-
-    return res.status(200).json({
-      status: "success",
-      data: reportData,
-      metadata: {
-        report_type: "Washroom Average Report",
-        generated_on: new Date().toISOString(),
-        organization: user?.company_name || "Company",
-        date_range: { start: start_date || "Beginning", end: end_date || "Now" }
-      },
-      message: "Washroom average report generated successfully",
-    });
-
-  } catch (error) {
-    console.error("Error generating washroom average report:", error);
-    res.status(500).json({ status: "error", message: "Failed to generate report" });
-  }
-};

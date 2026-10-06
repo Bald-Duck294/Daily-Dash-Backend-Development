@@ -25,7 +25,8 @@ const requireSuperAdmin = (req, res, next) => {
     next();
 };
 
-const requireSuperAdminOrCompanyMember = (req, res, next) => {
+// Middleware to ensure user is Superadmin OR has SLA update permission for their own company
+const requireSlaUpdatePermission = (req, res, next) => {
     if (!req.user) {
         return res.status(401).json({ success: false, message: "Unauthorized" });
     }
@@ -33,7 +34,28 @@ const requireSuperAdminOrCompanyMember = (req, res, next) => {
         return next();
     }
     const { company_id } = req.params;
-    if (company_id && String(req.user.company_id) === String(company_id)) {
+    const hasUpdatePerm = req.user.permissions?.includes('sla_management.update') || req.user.permissions?.includes('sla_management.add');
+    const isSameCompany = company_id && String(req.user.company_id) === String(company_id);
+
+    if (hasUpdatePerm && isSameCompany) {
+        return next();
+    }
+    return res.status(403).json({ success: false, message: "Forbidden: You do not have permission to update SLA settings for this company" });
+};
+
+// Middleware to ensure user is Superadmin OR has SLA view permission for their own company
+const requireSlaViewPermission = (req, res, next) => {
+    if (!req.user) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+    if (Number(req.user.role_id) === 1) {
+        return next();
+    }
+    const { company_id } = req.params;
+    const hasViewPerm = req.user.permissions?.includes('sla_management.view');
+    const isSameCompany = company_id && String(req.user.company_id) === String(company_id);
+
+    if (hasViewPerm && isSameCompany) {
         return next();
     }
     return res.status(403).json({ success: false, message: "Forbidden: You do not have access to this SLA configuration" });
@@ -42,18 +64,17 @@ const requireSuperAdminOrCompanyMember = (req, res, next) => {
 // Apply auth token middleware to all routes
 router.use(verifyToken);
 
-// Apply strict Super Admin requirement to most routes
+// Master Activation / Deactivation: Strictly reserved for Super Admin
 router.post("/enable", requireSuperAdmin, enableSLA);
 router.post("/disable", requireSuperAdmin, disableSLA);
 router.get("/", requireSuperAdmin, getCompanySLAList);
 
-// Washroom-level SLA routes (must be declared before parameterized :company_id)
+// Washroom-level SLA routes (controller handles detailed location tenancy & permission)
 router.get("/washroom/:location_id", getWashroomSLAConfiguration);
-router.put("/washroom/:location_id", requireSuperAdmin, updateWashroomSLAConfiguration);
+router.put("/washroom/:location_id", updateWashroomSLAConfiguration);
 
-router.put("/:company_id", requireSuperAdmin, updateSLAConfiguration);
-
-// Allow Super Admin OR Company Member to read SLA configuration
-router.get("/:company_id", requireSuperAdminOrCompanyMember, getSLAConfiguration);
+// Company-level SLA configuration
+router.put("/:company_id", requireSlaUpdatePermission, updateSLAConfiguration);
+router.get("/:company_id", requireSlaViewPermission, getSLAConfiguration);
 
 export default router;

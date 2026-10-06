@@ -96,7 +96,18 @@ export async function getSlaIncidents(req, res) {
             sort = "desc"
         } = req.query;
 
-        const effectiveCompanyId = company_id || companyId || (req.user?.role_id !== 1 ? req.user?.company_id : null);
+        // Check permissions for non-superadmins
+        if (req.user && Number(req.user.role_id) !== 1) {
+            const hasViewPerm = req.user.permissions?.includes('sla_management.view');
+            if (!hasViewPerm) {
+                return res.status(403).json({
+                    success: false,
+                    message: "Forbidden: You do not have permission to view SLA logs"
+                });
+            }
+        }
+
+        const effectiveCompanyId = (req.user?.role_id !== 1) ? req.user?.company_id : (company_id || companyId || null);
         const effectiveCleanerId = cleaner_user_id || cleanerId;
         const effectiveLocationId = location_id || locationId;
         const effectiveState = state || status;
@@ -450,6 +461,18 @@ export async function getSlaIncidentById(req, res) {
             return res.status(404).json({ success: false, message: "Incident not found" });
         }
 
+        // Non-superadmin tenancy and permission check
+        if (req.user && Number(req.user.role_id) !== 1) {
+            const hasViewPerm = req.user.permissions?.includes('sla_management.view');
+            const isSameCompany = String(inc.company_id) === String(req.user.company_id);
+            if (!hasViewPerm || !isSameCompany) {
+                return res.status(403).json({
+                    success: false,
+                    message: "Forbidden: You do not have permission to view this incident"
+                });
+            }
+        }
+
         // Aggregate reviews
         const reviewMap = new Map();
         if (inc.triggered_by_review) {
@@ -610,7 +633,18 @@ export async function getSlaLogs(req, res) {
             sort = "desc"
         } = req.query;
 
-        const effectiveCompanyId = company_id || companyId || (req.user?.role_id !== 1 ? req.user?.company_id : null);
+        // Check permissions for non-superadmins
+        if (req.user && Number(req.user.role_id) !== 1) {
+            const hasViewPerm = req.user.permissions?.includes('sla_management.view');
+            if (!hasViewPerm) {
+                return res.status(403).json({
+                    success: false,
+                    message: "Forbidden: You do not have permission to view SLA logs"
+                });
+            }
+        }
+
+        const effectiveCompanyId = (req.user?.role_id !== 1) ? req.user?.company_id : (company_id || companyId || null);
         const effectiveCleanerId = cleaner_user_id || cleanerId;
         const effectiveLocationId = location_id || locationId;
         const effectiveEventType = event_type || eventType;

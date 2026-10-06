@@ -80,10 +80,26 @@ export const resolveEffectiveWashroomSLA = async (locationId, companyId = null) 
             ? location.sla_config
             : null;
 
-        const isWashroomActive = washroomSla && (washroomSla.enabled === true || washroomSla.is_active === true);
+        // If washroom explicitly has SLA disabled (is_active === false or enabled === false)
+        if (washroomSla && (washroomSla.enabled === false || washroomSla.is_active === false)) {
+            return {
+                enabled: false,
+                isWashroomDisabled: true,
+                source: "WASHROOM_DISABLED",
+                location_id: location.id.toString(),
+                location_name: location.name,
+                company_id: finalCompanyId.toString(),
+                reason: "WASHROOM_SLA_DISABLED",
+                configuration: null
+            };
+        }
 
-        if (isWashroomActive) {
-            const threshold = Number(washroomSla.threshold_score ?? companySLA.configuration?.threshold_score ?? 7.0);
+        // If washroom has active custom override
+        const isWashroomActiveOverride = washroomSla && (washroomSla.enabled === true || washroomSla.is_active === true);
+
+        if (isWashroomActiveOverride) {
+            const threshold = Number(washroomSla.threshold_score ?? companySLA.configuration?.threshold_score ?? 8.0);
+            const maxRetries = Number(washroomSla.max_retry_attempts ?? companySLA.configuration?.max_retry_attempts ?? 2);
             return {
                 enabled: true,
                 source: "WASHROOM_OVERRIDE",
@@ -94,12 +110,13 @@ export const resolveEffectiveWashroomSLA = async (locationId, companyId = null) 
                 configuration: {
                     ...companySLA.configuration,
                     ...washroomSla,
-                    threshold_score: threshold
+                    threshold_score: threshold,
+                    max_retry_attempts: maxRetries
                 }
             };
         }
 
-        // 3. Fallback to Company SLA Baseline
+        // 3. Fallback to Company SLA Baseline (washroom has no override)
         const fallbackThreshold = Number(companySLA.configuration?.threshold_score ?? 8.0);
         return {
             enabled: true,
@@ -115,3 +132,4 @@ export const resolveEffectiveWashroomSLA = async (locationId, companyId = null) 
         throw error;
     }
 };
+

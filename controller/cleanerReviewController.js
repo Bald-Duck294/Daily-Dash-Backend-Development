@@ -6,6 +6,7 @@ import path from "path";
 import RBACFilterService from "../utils/rbacFilterService.js";
 import { checkAndTriggerWashroomSlaBreach } from "../services/slaNotificationService.js";
 import { evaluateReviewSla } from "../services/slaEscalationService.js";
+import { resolveEffectiveWashroomSLA } from "../services/slaConfigurationService.js";
 
 // =========================================================
 // 1️⃣ GET all cleaner reviews (with filters)
@@ -1760,42 +1761,21 @@ export async function updateManagementScore(req, res) {
         .json({ success: false, message: "Cleaner review not found" });
     }
 
-    // 3. Load SLA Config (Washroom-level override, fallback to Company SLA)
+    // 3. Load SLA Config (Hierarchy: Washroom override -> Company baseline)
     let maxUpdates = 1;
-    let isSlaActive = false;
-
     if (review.location_id) {
-      const locationRecord = await prisma.locations.findUnique({
-        where: { id: BigInt(review.location_id) },
-        select: { metadata: true },
-      });
-      if (locationRecord?.metadata?.sla?.enabled) {
-        isSlaActive = true;
-        maxUpdates = Number(
-          locationRecord.metadata.sla.max_score_updates_per_activity ?? 1,
-        );
-      }
-    }
-
-    if (!isSlaActive) {
-      const companyIdStr = review.company_id
-        ? review.company_id.toString()
-        : null;
-      if (!companyIdStr) {
-        return res.status(400).json({
-          success: false,
-          message: "Review has no associated company.",
-        });
-      }
-
-      const slaConfig = await getCompanySLAConfiguration(companyIdStr);
-      if (!slaConfig || !slaConfig.enabled) {
+      const effectiveSla = await resolveEffectiveWashroomSLA(
+        review.location_id,
+        review.company_id
+      );
+      if (!effectiveSla || !effectiveSla.enabled) {
         return res.status(400).json({
           success: false,
           message: "SLA is not enabled for this washroom or company.",
         });
       }
-      maxUpdates = slaConfig.configuration?.max_score_updates_per_activity ?? 1;
+      maxUpdates =
+        effectiveSla.configuration?.max_score_updates_per_activity ?? 1;
     }
 
     // 4. Same-day Validation
@@ -1890,6 +1870,815 @@ export async function updateManagementScore(req, res) {
     return res.status(500).json({
       success: false,
       message: "Failed to update score.",
+      detail: err.message,
+    });
+  }
+}
+
+// =========================================================
+// 🆕 SLA CLEANER ACTIVITY LIFECYCLE CONTROLLERS
+// =========================================================
+
+/**
+ * GET paginated list of SLA Cleaner Activities (Grouped by Cleaning Activity / SLA Lifecycle)
+ * Route: GET /api/cleaner-reviews/sla-activities
+ */
+export async function getSlaCleanerActivities(req, res) {
+  const {
+    cleaner_user_id,
+    cleaner_id,
+    status,
+    sla_status,
+    start_date,
+    end_date,
+    company_id,
+    search,
+    page = 1,
+    limit = 15,
+  } = req.query;
+
+  try {
+    const whereClause = {
+      OR: [
+        { parent_review_id: null },
+        { review_type: "ORIGINAL" },
+      ],
+    };
+
+    if (company_id) whereClause.company_id = BigInt(company_id);
+
+    const finalCleanerId = cleaner_user_id || cleaner_id;
+    if (finalCleanerId && finalCleanerId !== "all") {
+      whereClause.cleaner_user_id = BigInt(finalCleanerId);
+    }
+
+    if (status && status !== "all") {
+      whereClause.status = status;
+    }
+
+    if (start_date) {
+      const startDateObj = new Date(start_date);
+      startDateObj.setUTCHours(0, 0, 0, 0);
+
+      const endDateObj = end_date ? new Date(end_date) : new Date(start_date);
+      endDateObj.setUTCHours(23, 59, 59, 999);
+
+      whereClause.created_at = {
+        gte: startDateObj,
+        lte: endDateObj,
+      };
+    }
+
+    // Query root reviews with their retry_reviews and escalation details
+    const rootReviews = await prisma.cleaner_review.findMany({
+      where: whereClause,
+      include: {
+        cleaner_user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            role: { select: { id: true, name: true } },
+          },
+        },
+        location: {
+          select: {
+            id: true,
+            name: true,
+            company_id: true,
+            sla_config: true,
+            location_types: { select: { id: true, name: true } },
+            locations: { select: { id: true, name: true } },
+          },
+        },
+        company: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        retry_reviews: {
+          select: {
+            id: true,
+            review_type: true,
+            attempt_no: true,
+            score: true,
+            original_score: true,
+            is_modified: true,
+            status: true,
+            created_at: true,
+            updated_at: true,
+            before_photo: true,
+            after_photo: true,
+            initial_comment: true,
+            final_comment: true,
+            tasks: true,
+          },
+          orderBy: { created_at: "asc" },
+        },
+        escalation: {
+          include: {
+            corrective_reviews: {
+              select: {
+                id: true,
+                review_type: true,
+                attempt_no: true,
+                score: true,
+                original_score: true,
+                is_modified: true,
+                status: true,
+                created_at: true,
+                updated_at: true,
+                before_photo: true,
+                after_photo: true,
+                initial_comment: true,
+                final_comment: true,
+                tasks: true,
+              },
+              orderBy: { created_at: "asc" },
+            },
+            escalation_logs: {
+              select: {
+                id: true,
+                event_type: true,
+                level: true,
+                score: true,
+                created_at: true,
+              },
+              orderBy: { created_at: "asc" },
+            },
+          },
+        },
+        triggered_escalations: {
+          include: {
+            corrective_reviews: {
+              select: {
+                id: true,
+                review_type: true,
+                attempt_no: true,
+                score: true,
+                original_score: true,
+                is_modified: true,
+                status: true,
+                created_at: true,
+                updated_at: true,
+                before_photo: true,
+                after_photo: true,
+                initial_comment: true,
+                final_comment: true,
+                tasks: true,
+              },
+              orderBy: { created_at: "asc" },
+            },
+            escalation_logs: {
+              select: {
+                id: true,
+                event_type: true,
+                level: true,
+                score: true,
+                created_at: true,
+              },
+              orderBy: { created_at: "asc" },
+            },
+          },
+        },
+      },
+      orderBy: {
+        created_at: "desc",
+      },
+    });
+
+    // Group reviews into SLA activity lifecycles
+    let activities = rootReviews.map((root) => {
+      const escalation = root.escalation || root.triggered_escalations?.[0] || null;
+      const threshold = Number(root.location?.sla_config?.threshold ?? 8.0);
+
+      // Collect all retries linked via parent_review_id or escalation
+      const retryMap = new Map();
+      (root.retry_reviews || []).forEach((r) => {
+        if (r.id.toString() !== root.id.toString()) {
+          retryMap.set(r.id.toString(), r);
+        }
+      });
+      if (escalation?.corrective_reviews) {
+        escalation.corrective_reviews.forEach((r) => {
+          if (r.id.toString() !== root.id.toString()) {
+            retryMap.set(r.id.toString(), r);
+          }
+        });
+      }
+
+      const retries = Array.from(retryMap.values()).sort(
+        (a, b) => new Date(a.created_at) - new Date(b.created_at)
+      );
+
+      // Construct ordered attempts list
+      const attempts = [
+        {
+          attempt_no: 1,
+          label: "Original Review",
+          short_label: "Original",
+          review_id: root.id.toString(),
+          score: root.score !== null && root.score !== undefined ? Number(Number(root.score).toFixed(1)) : null,
+          raw_score: root.score,
+          original_score: root.original_score,
+          is_modified: root.is_modified,
+          status: root.status,
+          created_at: root.created_at,
+          updated_at: root.updated_at,
+          before_photo: root.before_photo || [],
+          after_photo: root.after_photo || [],
+          photos_count: (root.before_photo?.length || 0) + (root.after_photo?.length || 0),
+          initial_comment: root.initial_comment,
+          final_comment: root.final_comment,
+          tasks: root.tasks || [],
+          is_passed: root.score !== null && root.score !== undefined ? Number(root.score) >= threshold : false,
+        },
+        ...retries.map((r, idx) => {
+          const scoreNum = r.score !== null && r.score !== undefined ? Number(Number(r.score).toFixed(1)) : null;
+          return {
+            attempt_no: idx + 2,
+            label: `Retry #${idx + 1}`,
+            short_label: `Retry #${idx + 1}`,
+            review_id: r.id.toString(),
+            score: scoreNum,
+            raw_score: r.score,
+            original_score: r.original_score,
+            is_modified: r.is_modified,
+            status: r.status,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+            before_photo: r.before_photo || [],
+            after_photo: r.after_photo || [],
+            photos_count: (r.before_photo?.length || 0) + (r.after_photo?.length || 0),
+            initial_comment: r.initial_comment,
+            final_comment: r.final_comment,
+            tasks: r.tasks || [],
+            is_passed: scoreNum !== null ? scoreNum >= threshold : false,
+          };
+        }),
+      ];
+
+      const latestAttempt = attempts[attempts.length - 1];
+      const maxRetries = Number(escalation?.max_retries ?? root.location?.sla_config?.max_retries ?? 2);
+      const retriesUsed = attempts.length - 1;
+
+      // Determine SLA Lifecycle State
+      let slaState = "NO_BREACH";
+      let slaStatusLabel = "No SLA Breach";
+      let slaBadgeColor = "green";
+
+      if (escalation) {
+        if (escalation.state === "RESOLVED") {
+          slaState = "RESOLVED";
+          slaStatusLabel = "SLA Resolved";
+          slaBadgeColor = "emerald";
+        } else if (escalation.state === "EXHAUSTED" || escalation.state === "CLOSED") {
+          slaState = "EXHAUSTED";
+          slaStatusLabel = "SLA Exhausted";
+          slaBadgeColor = "red";
+        } else if (escalation.state === "OPEN") {
+          if (retriesUsed > 0) {
+            slaState = "RETRY_IN_PROGRESS";
+            slaStatusLabel = "Retry In Progress";
+            slaBadgeColor = "amber";
+          } else {
+            slaState = "BREACHED";
+            slaStatusLabel = "SLA Breached / Retry Required";
+            slaBadgeColor = "orange";
+          }
+        } else {
+          slaState = escalation.state;
+          slaStatusLabel = escalation.state;
+        }
+      }
+
+      // Compact Score Progression
+      const scoreProgression = attempts.map((att) => ({
+        label: att.short_label,
+        score: att.score,
+        is_passed: att.is_passed,
+        status: att.score !== null ? (att.is_passed ? "Passed" : "Failed") : "Pending",
+      }));
+
+      // Flatten preview photos
+      const allPhotos = attempts.flatMap((att) => [
+        ...(att.before_photo || []),
+        ...(att.after_photo || []),
+      ]);
+
+      return {
+        activity_id: root.id.toString(),
+        root_review_id: root.id.toString(),
+        latest_review_id: latestAttempt.review_id,
+        cleaner_user: root.cleaner_user || null,
+        location: root.location || null,
+        company: root.company || null,
+        company_id: root.company_id?.toString() || null,
+        status: latestAttempt.status,
+        original_score: attempts[0].score,
+        latest_score: latestAttempt.score,
+        sla_threshold: threshold,
+        sla_state: slaState,
+        sla_status_label: slaStatusLabel,
+        sla_badge_color: slaBadgeColor,
+        retries_used: retriesUsed,
+        max_retries: maxRetries,
+        retry_display: `${retriesUsed} / ${maxRetries}`,
+        started_at: root.created_at,
+        completed_at: latestAttempt.updated_at || latestAttempt.created_at,
+        attempts_count: attempts.length,
+        attempts: attempts,
+        score_progression: scoreProgression,
+        total_photos_count: allPhotos.length,
+        preview_photos: allPhotos.slice(0, 4),
+        escalation: escalation
+          ? {
+              id: escalation.id.toString(),
+              state: escalation.state,
+              current_level: escalation.current_level,
+              max_level: escalation.max_level,
+              retry_count: escalation.retry_count,
+              max_retries: escalation.max_retries,
+              due_at: escalation.due_at,
+              created_at: escalation.created_at,
+              resolved_at: escalation.resolved_at,
+              escalation_logs_count: escalation.escalation_logs?.length || 0,
+            }
+          : null,
+      };
+    });
+
+    // Apply SLA status filtering if specified
+    if (sla_status && sla_status !== "all") {
+      const slaFilterUpper = sla_status.toUpperCase();
+      activities = activities.filter((act) => {
+        if (slaFilterUpper === "NO_BREACH") return act.sla_state === "NO_BREACH";
+        if (slaFilterUpper === "BREACHED") return act.sla_state === "BREACHED";
+        if (slaFilterUpper === "RETRY_IN_PROGRESS" || slaFilterUpper === "IN_PROGRESS")
+          return act.sla_state === "RETRY_IN_PROGRESS";
+        if (slaFilterUpper === "RESOLVED") return act.sla_state === "RESOLVED";
+        if (slaFilterUpper === "EXHAUSTED") return act.sla_state === "EXHAUSTED";
+        return true;
+      });
+    }
+
+    // Apply Search Filter (Cleaner name or Location name)
+    if (search && search.trim()) {
+      const q = search.trim().toLowerCase();
+      activities = activities.filter(
+        (act) =>
+          act.cleaner_user?.name?.toLowerCase().includes(q) ||
+          act.location?.name?.toLowerCase().includes(q)
+      );
+    }
+
+    // Pagination
+    const totalItems = activities.length;
+    const take = parseInt(limit);
+    const currentPage = parseInt(page);
+    const totalPages = Math.ceil(totalItems / take) || 1;
+    const skip = (currentPage - 1) * take;
+    const paginatedActivities = activities.slice(skip, skip + take);
+
+    const safeSerialize = (obj) => {
+      if (obj === null || obj === undefined) return obj;
+      if (typeof obj === "bigint") return obj.toString();
+      if (obj instanceof Date) return obj.toISOString();
+      if (typeof obj === "object" && typeof obj.toNumber === "function") return obj.toNumber();
+      if (obj.d && obj.e !== undefined && obj.s !== undefined) {
+        return parseFloat(`${obj.s < 0 ? "-" : ""}${obj.d.join("")}e${obj.e - obj.d.length + 1}`);
+      }
+      if (Array.isArray(obj)) return obj.map(safeSerialize);
+      if (typeof obj === "object") {
+        const serialized = {};
+        for (const [key, value] of Object.entries(obj)) {
+          serialized[key] = safeSerialize(value);
+        }
+        return serialized;
+      }
+      return obj;
+    };
+
+    res.json({
+      success: true,
+      data: safeSerialize(paginatedActivities),
+      pagination: {
+        total_items: totalItems,
+        total_pages: totalPages,
+        current_page: currentPage,
+        items_per_page: take,
+        has_next_page: currentPage < totalPages,
+        has_prev_page: currentPage > 1,
+      },
+    });
+  } catch (err) {
+    console.error("Fetch SLA Cleaner Activities Error:", err);
+    res.status(500).json({
+      success: false,
+      error: "Failed to fetch SLA cleaner activities",
+      detail: err.message,
+    });
+  }
+}
+
+/**
+ * GET full details of a single SLA Cleaner Activity (Grouped by Cleaning Activity / SLA Lifecycle)
+ * Route: GET /api/cleaner-reviews/sla-activities/:activity_id
+ */
+export async function getSlaCleanerActivityById(req, res) {
+  const { activity_id } = req.params;
+
+  try {
+    if (!activity_id || isNaN(activity_id)) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid activity ID provided",
+      });
+    }
+
+    const targetId = BigInt(activity_id);
+
+    // 1. First, find if the review exists directly
+    let targetReview = await prisma.cleaner_review.findUnique({
+      where: { id: targetId },
+      include: {
+        parent_review: true,
+        escalation: true,
+      },
+    });
+
+    let rootId = targetId;
+
+    if (targetReview) {
+      // If this review is a retry, trace to root parent review
+      if (targetReview.parent_review_id) {
+        rootId = targetReview.parent_review_id;
+      }
+    } else {
+      // Check if targetId is an escalation_id
+      const escalationRecord = await prisma.sla_escalations.findUnique({
+        where: { id: targetId },
+        select: { triggered_by_review_id: true },
+      });
+      if (escalationRecord) {
+        rootId = escalationRecord.triggered_by_review_id;
+      } else {
+        return res.status(404).json({
+          success: false,
+          error: "Cleaning activity not found",
+        });
+      }
+    }
+
+    // 2. Fetch full root review with all relations, retries, escalations, and logs
+    const rootReview = await prisma.cleaner_review.findUnique({
+      where: { id: rootId },
+      include: {
+        cleaner_user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            role: { select: { id: true, name: true, description: true } },
+          },
+        },
+        location: {
+          select: {
+            id: true,
+            name: true,
+            latitude: true,
+            longitude: true,
+            metadata: true,
+            sla_config: true,
+            location_types: { select: { id: true, name: true } },
+            locations: { select: { id: true, name: true } },
+          },
+        },
+        company: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+          },
+        },
+        hygiene_score: {
+          select: {
+            id: true,
+            score: true,
+            details: true,
+          },
+        },
+        retry_reviews: {
+          include: {
+            cleaner_user: { select: { id: true, name: true } },
+            hygiene_score: true,
+          },
+          orderBy: { created_at: "asc" },
+        },
+        escalation: {
+          include: {
+            corrective_reviews: {
+              include: {
+                cleaner_user: { select: { id: true, name: true } },
+                hygiene_score: true,
+              },
+              orderBy: { created_at: "asc" },
+            },
+            escalation_logs: {
+              include: {
+                actor_user: {
+                  select: { id: true, name: true, role: { select: { name: true } } },
+                },
+              },
+              orderBy: { created_at: "asc" },
+            },
+          },
+        },
+        triggered_escalations: {
+          include: {
+            corrective_reviews: {
+              include: {
+                cleaner_user: { select: { id: true, name: true } },
+                hygiene_score: true,
+              },
+              orderBy: { created_at: "asc" },
+            },
+            escalation_logs: {
+              include: {
+                actor_user: {
+                  select: { id: true, name: true, role: { select: { name: true } } },
+                },
+              },
+              orderBy: { created_at: "asc" },
+            },
+          },
+        },
+      },
+    });
+
+    if (!rootReview) {
+      return res.status(404).json({
+        success: false,
+        error: "Cleaning activity not found",
+      });
+    }
+
+    const escalation = rootReview.escalation || rootReview.triggered_escalations?.[0] || null;
+    const threshold = Number(rootReview.location?.sla_config?.threshold ?? 8.0);
+
+    // Merge retry reviews
+    const retryMap = new Map();
+    (rootReview.retry_reviews || []).forEach((r) => {
+      if (r.id.toString() !== rootReview.id.toString()) {
+        retryMap.set(r.id.toString(), r);
+      }
+    });
+    if (escalation?.corrective_reviews) {
+      escalation.corrective_reviews.forEach((r) => {
+        if (r.id.toString() !== rootReview.id.toString()) {
+          retryMap.set(r.id.toString(), r);
+        }
+      });
+    }
+
+    const retries = Array.from(retryMap.values()).sort(
+      (a, b) => new Date(a.created_at) - new Date(b.created_at)
+    );
+
+    // Build attempts array
+    const attempts = [
+      {
+        attempt_no: 1,
+        label: "Original Review",
+        short_label: "Original",
+        review_id: rootReview.id.toString(),
+        cleaner_name: rootReview.cleaner_user?.name || "Cleaner",
+        score: rootReview.score !== null && rootReview.score !== undefined ? Number(Number(rootReview.score).toFixed(1)) : null,
+        raw_score: rootReview.score,
+        original_score: rootReview.original_score,
+        is_modified: rootReview.is_modified,
+        modification_comment: rootReview.modification_comment,
+        signature: rootReview.signature,
+        status: rootReview.status,
+        created_at: rootReview.created_at,
+        updated_at: rootReview.updated_at,
+        tasks: rootReview.tasks || [],
+        initial_comment: rootReview.initial_comment,
+        final_comment: rootReview.final_comment,
+        before_photo: rootReview.before_photo || [],
+        after_photo: rootReview.after_photo || [],
+        photos_count: (rootReview.before_photo?.length || 0) + (rootReview.after_photo?.length || 0),
+        hygiene_details: rootReview.hygiene_score?.details || null,
+        is_passed: rootReview.score !== null && rootReview.score !== undefined ? Number(rootReview.score) >= threshold : false,
+      },
+      ...retries.map((r, idx) => {
+        const scoreNum = r.score !== null && r.score !== undefined ? Number(Number(r.score).toFixed(1)) : null;
+        return {
+          attempt_no: idx + 2,
+          label: `Retry #${idx + 1}`,
+          short_label: `Retry #${idx + 1}`,
+          review_id: r.id.toString(),
+          cleaner_name: r.cleaner_user?.name || rootReview.cleaner_user?.name || "Cleaner",
+          score: scoreNum,
+          raw_score: r.score,
+          original_score: r.original_score,
+          is_modified: r.is_modified,
+          modification_comment: r.modification_comment,
+          signature: r.signature,
+          status: r.status,
+          created_at: r.created_at,
+          updated_at: r.updated_at,
+          tasks: r.tasks || [],
+          initial_comment: r.initial_comment,
+          final_comment: r.final_comment,
+          before_photo: r.before_photo || [],
+          after_photo: r.after_photo || [],
+          photos_count: (r.before_photo?.length || 0) + (r.after_photo?.length || 0),
+          hygiene_details: r.hygiene_score?.details || null,
+          is_passed: scoreNum !== null ? scoreNum >= threshold : false,
+        };
+      }),
+    ];
+
+    const latestAttempt = attempts[attempts.length - 1];
+    const maxRetries = Number(escalation?.max_retries ?? rootReview.location?.sla_config?.max_retries ?? 2);
+    const retriesUsed = attempts.length - 1;
+
+    // SLA State determination
+    let slaState = "NO_BREACH";
+    let slaStatusLabel = "No SLA Breach";
+    let slaBadgeColor = "green";
+
+    if (escalation) {
+      if (escalation.state === "RESOLVED") {
+        slaState = "RESOLVED";
+        slaStatusLabel = "SLA Resolved";
+        slaBadgeColor = "emerald";
+      } else if (escalation.state === "EXHAUSTED" || escalation.state === "CLOSED") {
+        slaState = "EXHAUSTED";
+        slaStatusLabel = "SLA Exhausted";
+        slaBadgeColor = "red";
+      } else if (escalation.state === "OPEN") {
+        if (retriesUsed > 0) {
+          slaState = "RETRY_IN_PROGRESS";
+          slaStatusLabel = "Retry In Progress";
+          slaBadgeColor = "amber";
+        } else {
+          slaState = "BREACHED";
+          slaStatusLabel = "SLA Breached / Retry Required";
+          slaBadgeColor = "orange";
+        }
+      } else {
+        slaState = escalation.state;
+        slaStatusLabel = escalation.state;
+      }
+    }
+
+    // Build minimal lifecycle timeline events
+    const timeline = [];
+
+    // 1. Original review event
+    timeline.push({
+      id: "orig-review",
+      title: "Original Review",
+      event_type: "ORIGINAL_REVIEW",
+      timestamp: rootReview.created_at,
+      score: attempts[0].score,
+      status: attempts[0].is_passed ? "Passed" : "Failed",
+      is_passed: attempts[0].is_passed,
+      description: `Original cleaning completed with score ${attempts[0].score ?? "N/A"}/10 (Threshold: ${threshold}/10).`,
+      cleaner_name: rootReview.cleaner_user?.name || "Cleaner",
+      attempt_no: 1,
+    });
+
+    // 2. SLA breach trigger if score failed
+    if (escalation) {
+      timeline.push({
+        id: "sla-breach",
+        title: "SLA Breach Triggered",
+        event_type: "SLA_BREACH",
+        timestamp: escalation.created_at,
+        score: attempts[0].score,
+        status: "Action Required",
+        description: `Score below threshold (${attempts[0].score ?? "N/A"} < ${threshold}). SLA Escalation initiated at Level ${escalation.current_level || 1}.`,
+        due_at: escalation.due_at,
+      });
+    }
+
+    // 3. Retry events
+    retries.forEach((r, idx) => {
+      const att = attempts[idx + 1];
+      timeline.push({
+        id: `retry-${r.id}`,
+        title: `Retry #${idx + 1}`,
+        event_type: "RETRY_REVIEW",
+        timestamp: r.created_at,
+        score: att.score,
+        status: att.is_passed ? "Passed" : "Failed",
+        is_passed: att.is_passed,
+        description: `Retry inspection #${idx + 1} completed with score ${att.score ?? "N/A"}/10.`,
+        cleaner_name: att.cleaner_name,
+        attempt_no: idx + 2,
+      });
+    });
+
+    // 4. Final SLA Outcome event
+    if (escalation?.state === "RESOLVED") {
+      timeline.push({
+        id: "sla-resolved",
+        title: "SLA Resolved",
+        event_type: "SLA_RESOLVED",
+        timestamp: escalation.resolved_at || latestAttempt.updated_at,
+        score: latestAttempt.score,
+        status: "Resolved",
+        is_passed: true,
+        description: `SLA breach resolved successfully on attempt #${attempts.length} with score ${latestAttempt.score}/10.`,
+      });
+    } else if (escalation?.state === "EXHAUSTED") {
+      timeline.push({
+        id: "sla-exhausted",
+        title: "SLA Exhausted",
+        event_type: "SLA_EXHAUSTED",
+        timestamp: escalation.updated_at,
+        score: latestAttempt.score,
+        status: "Exhausted",
+        is_passed: false,
+        description: `All ${maxRetries} retry attempts exhausted without meeting threshold. Critical supervisor alert raised.`,
+      });
+    }
+
+    // Sort timeline chronologically
+    timeline.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    const safeSerialize = (obj) => {
+      if (obj === null || obj === undefined) return obj;
+      if (typeof obj === "bigint") return obj.toString();
+      if (obj instanceof Date) return obj.toISOString();
+      if (typeof obj === "object" && typeof obj.toNumber === "function") return obj.toNumber();
+      if (obj.d && obj.e !== undefined && obj.s !== undefined) {
+        return parseFloat(`${obj.s < 0 ? "-" : ""}${obj.d.join("")}e${obj.e - obj.d.length + 1}`);
+      }
+      if (Array.isArray(obj)) return obj.map(safeSerialize);
+      if (typeof obj === "object") {
+        const serialized = {};
+        for (const [key, value] of Object.entries(obj)) {
+          serialized[key] = safeSerialize(value);
+        }
+        return serialized;
+      }
+      return obj;
+    };
+
+    const responsePayload = {
+      activity_id: rootReview.id.toString(),
+      root_review_id: rootReview.id.toString(),
+      latest_review_id: latestAttempt.review_id,
+      cleaner_user: rootReview.cleaner_user,
+      location: rootReview.location,
+      company: rootReview.company,
+      company_id: rootReview.company_id?.toString() || null,
+      status: latestAttempt.status,
+      original_score: attempts[0].score,
+      latest_score: latestAttempt.score,
+      sla_threshold: threshold,
+      sla_state: slaState,
+      sla_status_label: slaStatusLabel,
+      sla_badge_color: slaBadgeColor,
+      retries_used: retriesUsed,
+      max_retries: maxRetries,
+      retry_display: `${retriesUsed} / ${maxRetries}`,
+      started_at: rootReview.created_at,
+      completed_at: latestAttempt.updated_at || latestAttempt.created_at,
+      attempts: attempts,
+      timeline: timeline,
+      escalation: escalation
+        ? {
+            id: escalation.id.toString(),
+            state: escalation.state,
+            current_level: escalation.current_level,
+            max_level: escalation.max_level,
+            retry_count: escalation.retry_count,
+            max_retries: escalation.max_retries,
+            due_at: escalation.due_at,
+            created_at: escalation.created_at,
+            resolved_at: escalation.resolved_at,
+            escalation_logs: escalation.escalation_logs || [],
+          }
+        : null,
+    };
+
+    return res.status(200).json({
+      success: true,
+      data: safeSerialize(responsePayload),
+    });
+  } catch (err) {
+    console.error("Fetch SLA Cleaner Activity Detail Error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to fetch SLA cleaner activity detail",
       detail: err.message,
     });
   }
