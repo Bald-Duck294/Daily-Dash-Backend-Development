@@ -53,14 +53,46 @@ export const checkAndTriggerWashroomSlaBreach = async ({
         );
 
         // 4. Find assigned cleaners and supervisors for this washroom
+        const locationRecord = await prisma.locations.findUnique({
+            where: { id: locIdBigInt },
+            select: { id: true, parent_id: true, type_id: true, company_id: true }
+        });
+
+        const relevantLocationIds = [locIdBigInt];
+        let currentParentId = locationRecord?.parent_id;
+        while (currentParentId) {
+            relevantLocationIds.push(currentParentId);
+            const parentLoc = await prisma.locations.findUnique({
+                where: { id: currentParentId },
+                select: { id: true, parent_id: true }
+            });
+            currentParentId = parentLoc?.parent_id || null;
+        }
+
+        const assignmentConditions = [
+            { location_id: { in: relevantLocationIds } }
+        ];
+        if (locationRecord?.type_id) {
+            assignmentConditions.push({ type_id: locationRecord.type_id });
+        }
+
         const assignments = await prisma.cleaner_assignments.findMany({
-            where: { location_id: locIdBigInt },
+            where: {
+                OR: assignmentConditions,
+                deleted_at: null
+            },
             include: {
                 cleaner_user: {
-                    select: { id: true, name: true, fcm_token: true }
+                    select: {
+                        id: true,
+                        name: true,
+                        role_id: true,
+                        fcm_token: true,
+                        role: { select: { id: true, name: true } }
+                    }
                 },
                 supervisor: {
-                    select: { id: true, name: true, fcm_token: true }
+                    select: { id: true, name: true, role_id: true, fcm_token: true }
                 }
             }
         });
@@ -72,13 +104,27 @@ export const checkAndTriggerWashroomSlaBreach = async ({
         const fallbackTokens = new Set();
 
         for (const a of assignments) {
-            if (shouldNotifyCleaner && a.cleaner_user?.id) {
+            const isSupervisor =
+                a.role_id === 3 ||
+                a.role_id === 7 ||
+                a.cleaner_user?.role_id === 3 ||
+                a.cleaner_user?.role_id === 7 ||
+                ["supervisor", "Supervisor", "SUPERVISOR", "facility_supv", "facility_supervisor", "Facility Supervisor"].includes(a.cleaner_user?.role?.name);
+
+            if (shouldNotifySupervisor) {
+                if (a.supervisor?.id) {
+                    targetUserIds.add(a.supervisor.id);
+                    if (a.supervisor.fcm_token) fallbackTokens.add(a.supervisor.fcm_token);
+                }
+                if (isSupervisor && a.cleaner_user?.id) {
+                    targetUserIds.add(a.cleaner_user.id);
+                    if (a.cleaner_user.fcm_token) fallbackTokens.add(a.cleaner_user.fcm_token);
+                }
+            }
+
+            if (shouldNotifyCleaner && !isSupervisor && a.cleaner_user?.id) {
                 targetUserIds.add(a.cleaner_user.id);
                 if (a.cleaner_user.fcm_token) fallbackTokens.add(a.cleaner_user.fcm_token);
-            }
-            if (shouldNotifySupervisor && a.supervisor?.id) {
-                targetUserIds.add(a.supervisor.id);
-                if (a.supervisor.fcm_token) fallbackTokens.add(a.supervisor.fcm_token);
             }
         }
 

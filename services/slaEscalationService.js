@@ -48,24 +48,102 @@ async function sendEscalationPushNotification({
 
         // 2. Supervisor / Admin / All Role Targeting
         if (roleLower.includes("supervisor") || roleLower.includes("supv") || roleLower.includes("all")) {
+            // Fetch location details (including parent_id and type_id) to support hierarchical & zone assignments
+            const locationRecord = await prisma.locations.findUnique({
+                where: { id: locIdBigInt },
+                select: { id: true, parent_id: true, type_id: true, company_id: true }
+            });
+
+            const relevantLocationIds = [locIdBigInt];
+            let currentParentId = locationRecord?.parent_id;
+
+            // Traverse ancestor location hierarchy (e.g. Washroom -> Platform -> Station)
+            while (currentParentId) {
+                relevantLocationIds.push(currentParentId);
+                const parentLoc = await prisma.locations.findUnique({
+                    where: { id: currentParentId },
+                    select: { id: true, parent_id: true }
+                });
+                currentParentId = parentLoc?.parent_id || null;
+            }
+
+            const assignmentConditions = [
+                { location_id: { in: relevantLocationIds } }
+            ];
+            if (locationRecord?.type_id) {
+                assignmentConditions.push({ type_id: locationRecord.type_id });
+            }
+
             const assignments = await prisma.cleaner_assignments.findMany({
-                where: { location_id: locIdBigInt },
+                where: {
+                    OR: assignmentConditions,
+                    deleted_at: null
+                },
                 include: {
                     cleaner_user: {
-                        select: { id: true, name: true, fcm_token: true }
+                        select: {
+                            id: true,
+                            name: true,
+                            role_id: true,
+                            fcm_token: true,
+                            role: { select: { id: true, name: true } }
+                        }
                     },
                     supervisor: {
-                        select: { id: true, name: true, fcm_token: true }
+                        select: { id: true, name: true, role_id: true, fcm_token: true }
                     }
                 }
             });
 
+            const foundSupervisorIds = new Set();
+
             for (const a of assignments) {
+                // Case A: supervisor_id relation is explicitly set on the assignment
                 if (a.supervisor?.id) {
                     targetUserIds.add(a.supervisor.id);
+                    foundSupervisorIds.add(a.supervisor.id);
                     if (a.supervisor.fcm_token) fallbackTokens.add(a.supervisor.fcm_token);
                 }
+
+                // Case B: cleaner_user_id is the supervisor assigned directly to this location/zone
+                const isSupervisorRole =
+                    a.role_id === 3 ||
+                    a.role_id === 7 ||
+                    a.cleaner_user?.role_id === 3 ||
+                    a.cleaner_user?.role_id === 7 ||
+                    ["supervisor", "Supervisor", "SUPERVISOR", "facility_supv", "facility_supervisor", "Facility Supervisor"].includes(a.cleaner_user?.role?.name);
+
+                if (isSupervisorRole && a.cleaner_user?.id) {
+                    targetUserIds.add(a.cleaner_user.id);
+                    foundSupervisorIds.add(a.cleaner_user.id);
+                    if (a.cleaner_user.fcm_token) fallbackTokens.add(a.cleaner_user.fcm_token);
+                }
             }
+
+            // Case C: Also check if cleanerUserId has an assigned supervisor anywhere
+            if (cleanerUserId) {
+                const cleanerSupervisorAssignments = await prisma.cleaner_assignments.findMany({
+                    where: {
+                        cleaner_user_id: BigInt(cleanerUserId),
+                        supervisor_id: { not: null },
+                        deleted_at: null
+                    },
+                    include: {
+                        supervisor: {
+                            select: { id: true, name: true, fcm_token: true }
+                        }
+                    }
+                });
+                for (const csa of cleanerSupervisorAssignments) {
+                    if (csa.supervisor?.id) {
+                        targetUserIds.add(csa.supervisor.id);
+                        foundSupervisorIds.add(csa.supervisor.id);
+                        if (csa.supervisor.fcm_token) fallbackTokens.add(csa.supervisor.fcm_token);
+                    }
+                }
+            }
+
+            console.log(`🔎 [SLA SUPERVISORS] Found ${foundSupervisorIds.size} supervisor(s) for location "${locationName}" (ID: ${locIdBigInt}): [${Array.from(foundSupervisorIds).join(", ")}]`);
         }
 
         // 3. Company Admin Targeting (for Level 3 / admin roles)
@@ -750,6 +828,7 @@ export const advanceEscalationLevel = async (escalationId) => {
                 threshold: 0,
                 level: nextLevel,
                 targetRole: nextTargetRole,
+                cleanerUserId: escalation.cleaner_user_id,
                 escalationId: escalation.id,
                 reviewId: escalation.triggered_by_review_id,
                 notificationType: `sla_breach_level_${nextLevel}`,
