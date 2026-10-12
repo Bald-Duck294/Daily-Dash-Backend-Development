@@ -407,8 +407,14 @@ router.post(
       // Get Cloudinary URLs from middleware
       const imageUrls = req.uploadedFiles?.images || [];
 
-      const lat = parseFloat(body.latitude);
-      const long = parseFloat(body.longitude);
+      const lat =
+        body.latitude && !isNaN(parseFloat(body.latitude))
+          ? parseFloat(body.latitude)
+          : null;
+      const long =
+        body.longitude && !isNaN(parseFloat(body.longitude))
+          ? parseFloat(body.longitude)
+          : null;
 
       const frontendRating = parseFloat(body.rating);
 

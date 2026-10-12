@@ -293,6 +293,19 @@ export const deployWorkspace = async (req, res) => {
           // The zone_temp_id references a hierarchy node, which is now a location_type
           const parentTypeId = w.zone_temp_id ? idMap[w.zone_temp_id] : null;
 
+          let finalUsageCategory = null;
+          if (w.usage_category) {
+            if (typeof w.usage_category === "string") {
+              try {
+                finalUsageCategory = JSON.parse(w.usage_category);
+              } catch (e) {
+                finalUsageCategory = null;
+              }
+            } else if (typeof w.usage_category === "object") {
+              finalUsageCategory = w.usage_category;
+            }
+          }
+
           const createdWashroom = await tx.locations.create({
             data: {
               name: w.name,
@@ -300,6 +313,8 @@ export const deployWorkspace = async (req, res) => {
               parent_id: null,
               company_id: BigInt(companyId),
               status: true,
+              is_public: w.is_public !== undefined ? Boolean(w.is_public) : true,
+              usage_category: finalUsageCategory,
               options: {
                 type: w.type,
                 wc_count: w.wc_count,
