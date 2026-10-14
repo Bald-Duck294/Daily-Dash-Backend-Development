@@ -18,6 +18,11 @@ export const checkAndTriggerWashroomSlaBreach = async ({
     reviewType = "cleaner_review"
 }) => {
     try {
+        // Disabled: SLA breach notifications are not sent for user reviews
+        if (reviewType === "user_review") {
+            return { breached: false, reason: "SLA_NOTIFICATIONS_DISABLED_FOR_USER_REVIEWS" };
+        }
+
         if (!locationId || score === undefined || score === null) {
             return { breached: false, reason: "Missing locationId or score" };
         }

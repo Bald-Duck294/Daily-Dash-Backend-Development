@@ -443,15 +443,15 @@ router.post(
 
       console.log("✅ Review created with token:", review);
 
-      // Check for Washroom SLA breach and notify cleaner app if rating is below threshold
-      if (body.location_id && !isNaN(frontendRating)) {
-        checkAndTriggerWashroomSlaBreach({
-          locationId: body.location_id,
-          score: frontendRating,
-          reviewId: review.id,
-          reviewType: "user_review",
-        }).catch((err) => console.error("Error triggering SLA check for user review:", err));
-      }
+      // Note: SLA notifications and escalations are disabled for user reviews (cleaner reviews only)
+      // if (body.location_id && !isNaN(frontendRating)) {
+      //   checkAndTriggerWashroomSlaBreach({
+      //     locationId: body.location_id,
+      //     score: frontendRating,
+      //     reviewId: review.id,
+      //     reviewType: "user_review",
+      //   }).catch((err) => console.error("Error triggering SLA check for user review:", err));
+      // }
 
       if (imageUrls.length > 0) {
         await processUserReviewAIScoring(review, imageUrls);
