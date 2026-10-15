@@ -10,6 +10,8 @@ const router = express.Router();
  * 2. Header: 'Authorization: Bearer <token>'
  * 3. Query param: '?key=<token>'
  */
+
+
 function verifyCronSecret(req, res, next) {
     const configuredSecret = process.env.CRON_SECRET || "safai-sla-cron-secret-2026";
     
