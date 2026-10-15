@@ -274,7 +274,16 @@ import jwt from "jsonwebtoken";
 // import { serializeBigInt } from "../utils/serializeBigInt.js";
 export const registerUser = async (req, res) => {
   // ❌ Removed company_name from requirements
-  const { name, email, phone, password, role_id, age, birthdate, registrationToken } = req.body;
+  const {
+    name,
+    email,
+    phone,
+    password,
+    role_id,
+    age,
+    birthdate,
+    registrationToken,
+  } = req.body;
 
   if (!phone || !password || !registrationToken) {
     return res.status(400).json({
@@ -284,10 +293,10 @@ export const registerUser = async (req, res) => {
 
   const { verifyRegistrationToken } = await import("../utils/jwt.js");
   const decodedToken = verifyRegistrationToken(registrationToken);
-  
+
   if (!decodedToken || decodedToken.phone !== phone) {
     return res.status(401).json({
-      error: "Invalid or expired registration token. Please verify OTP again."
+      error: "Invalid or expired registration token. Please verify OTP again.",
     });
   }
 
@@ -631,7 +640,7 @@ const sendMsg91Otp = async (phone, otp) => {
         {
           mobiles: mobileNumber,
           // Mapping directly to ##var## and ##var1## in your approved template
-          var: "Safai",
+          var: "Saaf AI",
           var1: otp,
         },
       ],
@@ -657,18 +666,24 @@ export const requestOtp = async (req, res) => {
   const { phone, intent } = req.body;
 
   if (!phone || !intent) {
-    return res.status(400).json({ error: "Phone number and intent are required." });
+    return res
+      .status(400)
+      .json({ error: "Phone number and intent are required." });
   }
 
-  if (intent === 'register') {
+  if (intent === "register") {
     const existingUser = await prisma.users.findUnique({ where: { phone } });
     if (existingUser) {
-      return res.status(409).json({ error: "Phone number already registered. Please login." });
+      return res
+        .status(409)
+        .json({ error: "Phone number already registered. Please login." });
     }
-  } else if (intent === 'forgot') {
+  } else if (intent === "forgot") {
     const existingUser = await prisma.users.findUnique({ where: { phone } });
     if (!existingUser) {
-      return res.status(404).json({ error: "No account found with this phone number." });
+      return res
+        .status(404)
+        .json({ error: "No account found with this phone number." });
     }
   }
 
@@ -714,11 +729,9 @@ export const requestOtp = async (req, res) => {
 // 2. VERIFY OTP & STATELESS LOGIN
 // ==========================================
 
-
-
 export const verifyOtp = async (req, res) => {
   // 1. Add 'intent' to the destructured body (e.g., intent = 'login' or 'register')
-  const { phone, code, intent = 'login' } = req.body;
+  const { phone, code, intent = "login" } = req.body;
 
   if (!phone || !code) {
     return res.status(400).json({ error: "Phone and OTP code are required." });
@@ -736,7 +749,9 @@ export const verifyOtp = async (req, res) => {
     // Brute-force protection
     if (otpData.attempts >= MAX_ATTEMPTS) {
       await redisClient.del(`otp:${phone}`);
-      return res.status(429).json({ error: "Too many failed attempts. Request a new OTP." });
+      return res
+        .status(429)
+        .json({ error: "Too many failed attempts. Request a new OTP." });
     }
 
     // Validate the OTP code
@@ -759,23 +774,23 @@ export const verifyOtp = async (req, res) => {
     }
 
     // 🔥 2. NEW LOGIC: If they are just verifying for registration, stop here and return success.
-    if (intent === 'register') {
+    if (intent === "register") {
       const { generateRegistrationToken } = await import("../utils/jwt.js");
       const registrationToken = generateRegistrationToken({ phone });
       return res.json({
         status: "success",
         message: "OTP verified. Proceed to account creation.",
-        registrationToken
+        registrationToken,
       });
     }
-    
-    if (intent === 'forgot') {
+
+    if (intent === "forgot") {
       const { generateRegistrationToken } = await import("../utils/jwt.js");
       const registrationToken = generateRegistrationToken({ phone });
       return res.json({
         status: "success",
         message: "OTP verified. Proceed to reset password.",
-        registrationToken
+        registrationToken,
       });
     }
 
@@ -792,9 +807,10 @@ export const verifyOtp = async (req, res) => {
           include: { role: true },
         });
       } catch (err) {
-        if (err.code === 'P2002') {
+        if (err.code === "P2002") {
           return res.status(400).json({
-            error: "This phone number might belong to a deactivated account. Please contact support."
+            error:
+              "This phone number might belong to a deactivated account. Please contact support.",
           });
         }
         throw err;
@@ -821,8 +837,6 @@ export const verifyOtp = async (req, res) => {
     res.status(500).json({ error: "Failed to verify OTP." });
   }
 };
-
-
 
 // export const verifyOtp = async (req, res) => {
 //   const { phone, code } = req.body;
@@ -901,8 +915,6 @@ export const verifyOtp = async (req, res) => {
 //     res.status(500).json({ error: "Failed to verify OTP." });
 //   }
 // };
-
-
 
 export const resetPassword = async (req, res) => {
   const { phone, newPassword } = req.body;
@@ -987,18 +999,23 @@ export const getOnboardingStatus = async (req, res) => {
       success: true,
       companyProfileCompleted: Boolean(hasProfile),
       workspaceExists: Boolean(hasWorkspace),
-      isOnboardingCompleted: Boolean(company.is_onboarding_completed) || Boolean(hasWorkspace),
-      is_onboarding_completed: Boolean(company.is_onboarding_completed) || Boolean(hasWorkspace),
+      isOnboardingCompleted:
+        Boolean(company.is_onboarding_completed) || Boolean(hasWorkspace),
+      is_onboarding_completed:
+        Boolean(company.is_onboarding_completed) || Boolean(hasWorkspace),
       nextStep,
       company: {
         id: company.id.toString(),
         name: company.name,
-        is_onboarding_completed: Boolean(company.is_onboarding_completed) || Boolean(hasWorkspace),
+        is_onboarding_completed:
+          Boolean(company.is_onboarding_completed) || Boolean(hasWorkspace),
         onboarding_metadata: company.onboarding_metadata,
       },
     });
   } catch (error) {
     console.error("Error fetching onboarding status:", error);
-    res.status(500).json({ success: false, message: "Failed to fetch onboarding status" });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch onboarding status" });
   }
 };

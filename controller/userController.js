@@ -103,7 +103,28 @@ export async function getclientUser(req, res) {
         where: mainWhere,
         skip: skip,
         take: parsedLimit,
-        include: { role: true },
+        include: {
+          role: true,
+          cleaner_assignments_as_cleaner: {
+            where: {
+              deleted_at: null,
+              status: "assigned",
+            },
+            select: {
+              id: true,
+              name: true,
+              location_id: true,
+              type_id: true,
+              status: true,
+              locations: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          },
+        },
         orderBy: { id: "desc" },
       }),
       prisma.users.count({
@@ -121,6 +142,21 @@ export async function getclientUser(req, res) {
       if (item.role_id) acc[item.role_id.toString()] = Number(item._count._all);
       return acc;
     }, {});
+
+    // Map clean assignments list onto each user
+    const usersWithAssignments = users.map((u) => {
+      const assignments = (u.cleaner_assignments_as_cleaner || []).map((a) => ({
+        id: a.id,
+        location_id: a.location_id,
+        type_id: a.type_id,
+        name: a.locations?.name || a.name || "Assigned Location",
+        status: a.status || "assigned",
+      }));
+      return {
+        ...u,
+        assignments,
+      };
+    });
 
     // --- 🚨 THE BULLETPROOF FIX 🚨 ---
     // This helper recursively finds ANY BigInt in an object/array and makes it a String
@@ -142,7 +178,7 @@ export async function getclientUser(req, res) {
 
     // Serialize everything before sending
     const safeData = serializeBigInt({
-      data: users,
+      data: usersWithAssignments,
       roleCounts: roleCounts,
       meta: {
         totalCount: totalCount,
