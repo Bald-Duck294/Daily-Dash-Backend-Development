@@ -316,51 +316,85 @@ export const getWeeklyCleanerPerformance = async (req, res) => {
       "dashboard",
     );
 
+    const parseDateOnly = (dateInput) => {
+      if (!dateInput) return null;
+      if (typeof dateInput === "string") {
+        const match = dateInput.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (match) {
+          return new Date(
+            Date.UTC(
+              Number(match[1]),
+              Number(match[2]) - 1,
+              Number(match[3]),
+              0,
+              0,
+              0,
+              0,
+            ),
+          );
+        }
+      }
+      const d = new Date(dateInput);
+      return new Date(
+        Date.UTC(
+          d.getUTCFullYear(),
+          d.getUTCMonth(),
+          d.getUTCDate(),
+          0,
+          0,
+          0,
+          0,
+        ),
+      );
+    };
+
     let startDateObj, endDateObj;
     const sDate = start_date || startDate;
     const eDate = end_date || endDate;
 
     if (sDate) {
-      startDateObj = new Date(sDate);
-      startDateObj.setHours(0, 0, 0, 0);
-
-      endDateObj = new Date(eDate || new Date());
-      endDateObj.setHours(0, 0, 0, 0);
+      startDateObj = parseDateOnly(sDate);
+      endDateObj = parseDateOnly(eDate) || new Date();
 
       const diffTime = endDateObj - startDateObj;
       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
       if (diffDays < 6) {
         endDateObj = new Date(startDateObj);
-        endDateObj.setDate(startDateObj.getDate() + 6);
+        endDateObj.setUTCDate(startDateObj.getUTCDate() + 6);
       }
     } else {
-      endDateObj = new Date();
-      endDateObj.setHours(0, 0, 0, 0);
-      startDateObj = new Date();
-      startDateObj.setDate(endDateObj.getDate() - 6);
-      startDateObj.setHours(0, 0, 0, 0);
+      const now = new Date();
+      endDateObj = new Date(
+        Date.UTC(
+          now.getUTCFullYear(),
+          now.getUTCMonth(),
+          now.getUTCDate(),
+          0,
+          0,
+          0,
+          0,
+        ),
+      );
+      startDateObj = new Date(endDateObj);
+      startDateObj.setUTCDate(endDateObj.getUTCDate() - 6);
     }
 
     const days = [];
     let currentDate = new Date(startDateObj);
     while (currentDate <= endDateObj) {
       days.push(new Date(currentDate));
-      currentDate.setDate(currentDate.getDate() + 1);
+      currentDate.setUTCDate(currentDate.getUTCDate() + 1);
     }
-
-    let totalTasks = 0;
-    let bestDayCount = -1;
-    let bestDayName = "N/A";
 
     const windowStart = new Date(days[0]);
     const windowEnd = new Date(days[days.length - 1]);
-    windowEnd.setHours(23, 59, 59, 999);
+    windowEnd.setUTCHours(23, 59, 59, 999);
 
     const totalTasksCreated = await prisma.cleaner_review.count({
       where: {
         company_id: BigInt(companyId),
-        updated_at: { gte: windowStart, lte: windowEnd },
+        created_at: { gte: windowStart, lte: windowEnd },
         ...(roleFilter.id && { location_id: roleFilter.id }),
       },
     });
@@ -369,37 +403,53 @@ export const getWeeklyCleanerPerformance = async (req, res) => {
       days.map(async (day) => {
         const start = new Date(day);
         const end = new Date(day);
-        end.setHours(23, 59, 59, 999);
+        end.setUTCHours(23, 59, 59, 999);
 
-        // Count all completed tasks for the specific day
+        // Count all completed tasks for the specific day based on task creation date
         const count = await prisma.cleaner_review.count({
           where: {
             company_id: BigInt(companyId),
             status: "completed",
-            updated_at: { gte: start, lte: end },
+            created_at: { gte: start, lte: end },
             ...(roleFilter.id && { location_id: roleFilter.id }),
           },
         });
 
-        totalTasks += count;
         const dayNameShort = day.toLocaleDateString("en-US", {
           weekday: "short",
+          timeZone: "UTC",
         });
         const dayNameLong = day.toLocaleDateString("en-US", {
           weekday: "long",
+          timeZone: "UTC",
         });
-
-        if (count > bestDayCount) {
-          bestDayCount = count;
-          bestDayName = dayNameLong;
-        }
 
         return {
           day: dayNameShort,
+          dayLong: dayNameLong,
           date: day.toISOString().split("T")[0],
           count: count,
         };
       }),
+    );
+
+    let totalTasks = 0;
+    let bestDayCount = -1;
+    let bestDayName = "N/A";
+
+    const sanitizedData = performanceData.map(
+      ({ day, dayLong, date, count }) => {
+        totalTasks += count;
+        if (count > bestDayCount) {
+          bestDayCount = count;
+          bestDayName = dayLong;
+        }
+        return {
+          day,
+          date,
+          count,
+        };
+      },
     );
 
     const averagePerDay = (totalTasks / days.length).toFixed(1);
@@ -410,7 +460,7 @@ export const getWeeklyCleanerPerformance = async (req, res) => {
 
     res.json({
       success: true,
-      data: performanceData,
+      data: sanitizedData,
       stats: {
         totalTasks,
         averagePerDay: Number(averagePerDay),

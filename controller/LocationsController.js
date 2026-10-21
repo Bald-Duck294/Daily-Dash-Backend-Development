@@ -2474,7 +2474,7 @@ export const downloadLocationQRs = async (req, res) => {
 
     const formUrl =
       process.env.FRONTEND_URL ||
-      "https://saaf-ai-user-feedback-form.vercel.app/user-review";
+      "https://portal.saafai.in/feedback/tadoba";
     let generatedUsageCodes = [];
 
     let usageCategoryObj = location.usage_category;
