@@ -2472,9 +2472,11 @@ export const downloadLocationQRs = async (req, res) => {
       });
     }
 
-    const formUrl =
-      process.env.FRONTEND_URL ||
-      "https://portal.saafai.in/feedback/tadoba";
+    const isTadoba =
+      location.company_id && location.company_id.toString() === "95";
+    const formUrl = isTadoba
+      ? "https://portal.saafai.in/feedback/tadoba"
+      : "https://portal.saafai.in/feedback";
     let generatedUsageCodes = [];
 
     let usageCategoryObj = location.usage_category;
