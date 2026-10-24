@@ -178,8 +178,21 @@ export const checkAndTriggerWashroomSlaBreach = async ({
             return { breached: true, notifiedCount: 0, reason: "Firebase Admin not initialized" };
         }
 
+        let cleanerName = "Cleaner";
+        if (reviewId) {
+            const rev = await prisma.cleaner_review.findUnique({
+                where: { id: BigInt(reviewId) },
+                select: {
+                    cleaner_user: { select: { name: true } }
+                }
+            });
+            if (rev?.cleaner_user?.name) {
+                cleanerName = rev.cleaner_user.name;
+            }
+        }
+
         const notificationTitle = `Cleaning Alert - ${locationName}`;
-        const notificationBody = `Cleanliness score for ${locationName} dropped to ${numericScore.toFixed(1)}/10 (Target: ${threshold}/10). Immediate cleaning required.`;
+        const notificationBody = `${cleanerName} cleaned ${locationName} with ${numericScore.toFixed(1)} score, which is below threshold ${threshold}. Needs re-cleaning.`;
 
         const messaging = getMessaging();
         let successCount = 0;
@@ -201,6 +214,27 @@ export const checkAndTriggerWashroomSlaBreach = async ({
                         locationId: locIdBigInt.toString(),
                         score: numericScore.toString(),
                         threshold: threshold.toString()
+                    },
+                    // 📱 Force Android devices to wake up from sleep mode immediately
+                    android: {
+                        priority: "high",
+                        notification: {
+                            sound: "default",
+                            channelId: "sla_alerts_channel",
+                            priority: "max"
+                        }
+                    },
+                    // 🍎 Force iOS devices to ring immediately
+                    apns: {
+                        headers: {
+                            "apns-priority": "10"
+                        },
+                        payload: {
+                            aps: {
+                                sound: "default",
+                                badge: 1
+                            }
+                        }
                     }
                 };
 

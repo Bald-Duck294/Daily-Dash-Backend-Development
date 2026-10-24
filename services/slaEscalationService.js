@@ -6,6 +6,15 @@ import { DEFAULT_ESCALATION_LEVELS, SLA_EVENT_TYPES } from "../constant/slaDefau
 import { logEscalationEvent } from "./slaAuditLogService.js";
 
 /**
+ * Returns ordinal string for a number (1st, 2nd, 3rd, etc.)
+ */
+function getOrdinal(n) {
+    const s = ["th", "st", "nd", "rd"];
+    const v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+/**
  * Helper to dispatch push notifications to target users via Firebase Admin
  */
 async function sendEscalationPushNotification({
@@ -34,8 +43,8 @@ async function sendEscalationPushNotification({
         const fallbackTokens = new Set();
         const roleLower = String(targetRole || "").toLowerCase();
 
-        // 1. Level 1 Cleaner Targeting: Target ONLY the specific cleaner who caused the breach / submitted review
-        if (roleLower.includes("cleaner")) {
+        // 1. Cleaner Targeting: Target the specific cleaner who caused the breach / submitted review
+        if (roleLower.includes("cleaner") || roleLower.includes("all")) {
             if (cleanerUserId) {
                 targetUserIds.add(BigInt(cleanerUserId));
                 const cUser = await prisma.users.findUnique({
@@ -234,6 +243,27 @@ async function sendEscalationPushNotification({
                         level: String(level || 1),
                         score: score !== undefined && score !== null ? score.toString() : "0",
                         threshold: threshold ? threshold.toString() : "0"
+                    },
+                    // 📱 Force Android devices to wake up from sleep mode immediately
+                    android: {
+                        priority: "high",
+                        notification: {
+                            sound: "default",
+                            channelId: "sla_alerts_channel",
+                            priority: "max"
+                        }
+                    },
+                    // 🍎 Force iOS devices to ring immediately
+                    apns: {
+                        headers: {
+                            "apns-priority": "10"
+                        },
+                        payload: {
+                            aps: {
+                                sound: "default",
+                                badge: 1
+                            }
+                        }
                     }
                 };
 
@@ -359,12 +389,15 @@ export const createSlaEscalation = async ({
             }
         });
 
+        const cleanerName = review.cleaner_user?.name || (await prisma.users.findUnique({ where: { id: BigInt(cleanerUserId) }, select: { name: true } }))?.name || "Cleaner";
+        const locationName = effectiveSla.location_name || review.location?.name || "Washroom";
+
         // 4. Dispatch Level 1 Notification to assigned Cleaner
         const level1Config = levels[0] || { target_role: "cleaner", send_notification: true };
         if (level1Config.send_notification !== false) {
             await sendEscalationPushNotification({
                 locationId: review.location_id,
-                locationName: effectiveSla.location_name || "Washroom",
+                locationName,
                 companyId: review.company_id,
                 score,
                 threshold,
@@ -374,8 +407,8 @@ export const createSlaEscalation = async ({
                 escalationId: escalation.id,
                 reviewId: review.id,
                 notificationType: "sla_breach_level_1",
-                title: `Cleaning Alert - ${effectiveSla.location_name || "Washroom"}`,
-                body: `Cleanliness score for ${effectiveSla.location_name || "Washroom"} dropped to ${score.toFixed(1)}/10 (Target: ${threshold}/10). Immediate cleaning required.`
+                title: `Cleaning Alert - ${locationName}`,
+                body: `${cleanerName} cleaned ${locationName} with ${score.toFixed(1)} score, which is below threshold ${threshold}. Needs re-cleaning.`
             });
         }
 
@@ -396,7 +429,10 @@ export const resolveSlaEscalation = async ({
     locationName = "Washroom",
     companyId = null,
     score = 0,
-    actorUserId = null
+    threshold = 8,
+    actorUserId = null,
+    cleanerName = null,
+    retryCount = 1
 }) => {
     try {
         const escIdBigInt = BigInt(escalationId);
@@ -454,20 +490,37 @@ export const resolveSlaEscalation = async ({
             metadata: { resolvedAt: resolvedAt.toISOString() }
         });
 
+        // Resolve cleaner name if not provided
+        let effectiveCleanerName = cleanerName;
+        if (!effectiveCleanerName && (actorUserId || updated.cleaner_user_id)) {
+            const u = await prisma.users.findUnique({
+                where: { id: BigInt(actorUserId || updated.cleaner_user_id) },
+                select: { name: true }
+            });
+            effectiveCleanerName = u?.name || "Cleaner";
+        }
+
+        const retryOrdinal = getOrdinal(retryCount || 1);
+        const resolvedTitle = `Cleaning Verified - ${locationName}`;
+        const resolvedBody = retryCount > 0
+            ? `[Retry #${retryCount} Passed] ${effectiveCleanerName} ${retryOrdinal} time retried cleaning of ${locationName} and met threshold ${threshold} with score ${score.toFixed(1)}/10!`
+            : `${effectiveCleanerName} cleaned ${locationName} and met threshold ${threshold} with score ${score.toFixed(1)}/10!`;
+
         // 4. Notify Cleaner, Supervisor, Admin, and Super Admin of resolution
         await sendEscalationPushNotification({
             locationId: updated.location_id,
             locationName,
             companyId: companyId || updated.company_id,
             score,
-            threshold: 0,
+            threshold,
             level: updated.current_level,
             targetRole: "all",
+            cleanerUserId: updated.cleaner_user_id || actorUserId,
             escalationId: updated.id,
             reviewId: retryReviewIdBigInt,
             notificationType: "sla_restored",
-            title: `Cleaning Completed - ${locationName}`,
-            body: `${locationName} has been cleaned and inspected with score ${score.toFixed(1)}/10.`
+            title: resolvedTitle,
+            body: resolvedBody
         });
 
         return updated;
@@ -486,7 +539,11 @@ export const exhaustSlaEscalation = async ({
     locationName = "Washroom",
     companyId = null,
     score = 0,
-    actorUserId = null
+    threshold = 8,
+    actorUserId = null,
+    cleanerName = null,
+    retryCount = 2,
+    maxRetries = 2
 }) => {
     try {
         const escIdBigInt = BigInt(escalationId);
@@ -571,19 +628,32 @@ export const exhaustSlaEscalation = async ({
             metadata: { retryCount: updated.retry_count, maxRetries: updated.max_retries }
         });
 
+        // Resolve cleaner name if not provided
+        let effectiveCleanerName = cleanerName;
+        if (!effectiveCleanerName && (actorUserId || escalation.cleaner_user_id)) {
+            const u = await prisma.users.findUnique({
+                where: { id: BigInt(actorUserId || escalation.cleaner_user_id) },
+                select: { name: true }
+            });
+            effectiveCleanerName = u?.name || "Cleaner";
+        }
+
+        const exhaustedBody = `[Retries Exhausted] ${effectiveCleanerName} failed ${retryCount} cleaning attempts on ${locationName} (Final Score: ${score.toFixed(1)}/10 vs Target: ${threshold}/10). Management intervention required.`;
+
         // Critical failure alert to Cleaner, Supervisor, Admin, and Super Admin
         await sendEscalationPushNotification({
             locationId: updated.location_id,
             locationName,
             companyId: companyId || updated.company_id,
             score,
-            threshold: 0,
+            threshold,
             level: updated.current_level,
             targetRole: "all",
+            cleanerUserId: updated.cleaner_user_id || actorUserId,
             escalationId: updated.id,
             notificationType: "sla_exhausted",
             title: `Critical Alert - ${locationName}`,
-            body: `${locationName} failed inspection after multiple cleaning attempts (Score: ${score.toFixed(1)}/10). Management intervention required.`
+            body: exhaustedBody
         });
 
         return updated;
@@ -663,6 +733,9 @@ export const handleSlaRetry = async ({
             }
         });
 
+        const cleanerName = review.cleaner_user?.name || (await prisma.users.findUnique({ where: { id: BigInt(cleanerUserId) }, select: { name: true } }))?.name || "Cleaner";
+        const locationName = effectiveSla.location_name || review.location?.name || "Washroom";
+
         // =========================================================================
         // PATH A: RETRY PASSED (Score >= Threshold)
         // =========================================================================
@@ -670,10 +743,13 @@ export const handleSlaRetry = async ({
             await resolveSlaEscalation({
                 escalationId: activeEscalationId,
                 retryReviewId: review.id,
-                locationName: effectiveSla.location_name || "Washroom",
+                locationName,
                 companyId: review.company_id,
                 score: numericScore,
-                actorUserId: cleanerUserId
+                threshold,
+                actorUserId: cleanerUserId,
+                cleanerName,
+                retryCount: newRetryCount
             });
 
             return {
@@ -693,10 +769,14 @@ export const handleSlaRetry = async ({
             // Max allowed retries reached -> EXHAUST escalation
             await exhaustSlaEscalation({
                 escalationId: activeEscalationId,
-                locationName: effectiveSla.location_name || "Washroom",
+                locationName,
                 companyId: review.company_id,
                 score: numericScore,
-                actorUserId: cleanerUserId
+                threshold,
+                actorUserId: cleanerUserId,
+                cleanerName,
+                retryCount: newRetryCount,
+                maxRetries
             });
 
             return {
@@ -707,7 +787,10 @@ export const handleSlaRetry = async ({
             };
         }
 
-        // Retries still remain: log failure, notify cleaner, keep escalation OPEN
+        // Retries still remain: log failure, notify cleaner & supervisor, keep escalation OPEN
+        const retryOrdinal = getOrdinal(newRetryCount);
+        const remainingRetries = maxRetries - newRetryCount;
+
         await logEscalationEvent({
             escalationId: activeEscalationId,
             reviewId: review.id,
@@ -719,25 +802,25 @@ export const handleSlaRetry = async ({
                 attemptNo,
                 retryCount: newRetryCount,
                 maxRetries,
-                remainingRetries: maxRetries - newRetryCount
+                remainingRetries
             }
         });
 
-        // Send retry failure notice to cleaner
+        // Send retry failure notice to BOTH cleaner and supervisor
         await sendEscalationPushNotification({
             locationId: review.location_id,
-            locationName: effectiveSla.location_name || "Washroom",
+            locationName,
             companyId: review.company_id,
             score: numericScore,
             threshold,
             level: activeEscalation.current_level,
-            targetRole: "cleaner",
+            targetRole: "cleaner,supervisor",
             cleanerUserId: cleanerUserId,
             escalationId: activeEscalationId,
             reviewId: review.id,
             notificationType: "sla_retry_failed",
-            title: `Retry Incomplete - ${effectiveSla.location_name || "Washroom"}`,
-            body: `Score is ${numericScore.toFixed(1)}/10 (Target: ${threshold}/10). ${maxRetries - newRetryCount} retry attempt(s) remaining.`
+            title: `Retry Incomplete - ${locationName}`,
+            body: `[Retry #${newRetryCount}] ${cleanerName} ${retryOrdinal} time retried cleaning of ${locationName} with score ${numericScore.toFixed(1)}/10 and did not meet threshold ${threshold}. (${remainingRetries} attempt${remainingRetries === 1 ? '' : 's'} remaining)`
         });
 
         return {
@@ -762,7 +845,9 @@ export const advanceEscalationLevel = async (escalationId) => {
         const escalation = await prisma.sla_escalations.findUnique({
             where: { id: escIdBigInt },
             include: {
-                location: { select: { id: true, name: true } }
+                location: { select: { id: true, name: true } },
+                cleaner_user: { select: { id: true, name: true } },
+                triggered_by_review: { select: { id: true, score: true } }
             }
         });
 
@@ -820,9 +905,23 @@ export const advanceEscalationLevel = async (escalationId) => {
 
         // Dispatch Tier notification
         if (nextLevelConfig.send_notification !== false) {
+            const cleanerName = escalation.cleaner_user?.name || "Cleaner";
+            const locName = escalation.location?.name || "Washroom";
+            const initialScore = escalation.triggered_by_review?.score != null
+                ? ` (Initial Score: ${Number(escalation.triggered_by_review.score).toFixed(1)}/10)`
+                : "";
+
+            const tierTitle = nextLevel === 2
+                ? `Urgent Cleaning Required - ${locName}`
+                : `SLA Escalation (Level ${nextLevel}) - ${locName}`;
+
+            const tierBody = nextLevel === 2
+                ? `Cleaning for ${locName} by ${cleanerName}${initialScore} remains pending past SLA window. Supervisor inspection required.`
+                : `SLA breach for ${locName} by ${cleanerName}${initialScore} remains unresolved at Level ${nextLevel}. Immediate management intervention required.`;
+
             await sendEscalationPushNotification({
                 locationId: escalation.location_id,
-                locationName: escalation.location?.name || "Washroom",
+                locationName: locName,
                 companyId: escalation.company_id,
                 score: 0,
                 threshold: 0,
@@ -832,8 +931,8 @@ export const advanceEscalationLevel = async (escalationId) => {
                 escalationId: escalation.id,
                 reviewId: escalation.triggered_by_review_id,
                 notificationType: `sla_breach_level_${nextLevel}`,
-                title: `Urgent Cleaning Required - ${escalation.location?.name || "Washroom"}`,
-                body: `Cleaning for ${escalation.location?.name || "Washroom"} remains pending and requires immediate attention.`
+                title: tierTitle,
+                body: tierBody
             });
         }
 
@@ -876,6 +975,8 @@ export const evaluateReviewSla = async ({
                 company_id: true,
                 location_id: true,
                 cleaner_user_id: true,
+                cleaner_user: { select: { id: true, name: true } },
+                location: { select: { id: true, name: true } },
                 created_at: true,
                 score: true,
                 review_type: true,
