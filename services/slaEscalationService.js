@@ -1006,6 +1006,9 @@ export const evaluateReviewSla = async ({
         const effectiveSla = await resolveEffectiveWashroomSLA(locIdBigInt, effectiveCompanyId);
 
         if (!effectiveSla || !effectiveSla.enabled) {
+            try {
+                await prisma.$executeRaw`UPDATE cleaner_review SET sla_evaluated = TRUE WHERE id = ${reviewIdBigInt}`;
+            } catch (_) {}
             return { evaluated: true, breached: false, reason: effectiveSla?.reason || "SLA_DISABLED" };
         }
 
@@ -1058,6 +1061,9 @@ export const evaluateReviewSla = async ({
                     is_latest: true
                 }
             });
+            try {
+                await prisma.$executeRaw`UPDATE cleaner_review SET sla_evaluated = TRUE WHERE id = ${reviewIdBigInt}`;
+            } catch (_) {}
             return { evaluated: true, breached: false, status: "PASS", score: numericScore, threshold };
         }
 

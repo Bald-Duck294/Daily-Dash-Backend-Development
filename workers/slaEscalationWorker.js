@@ -1,7 +1,9 @@
+import "dotenv/config";
 import cron from "node-cron";
 import dotenv from "dotenv";
 import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { fileURLToPath } from "url";
+import path from "path";
 import prisma from "../config/prismaClient.mjs";
 import { advanceEscalationLevel, evaluateReviewSla } from "../services/slaEscalationService.js";
 
@@ -29,6 +31,7 @@ function initFirebaseIfConfigured() {
             initializeApp({
                 credential: cert(serviceAccount),
             });
+            console.log("🔥 [SLA WORKER] Firebase Admin initialized for push notifications.");
         } catch (err) {
             console.warn("⚠️ [SLA WORKER] Firebase initialization skipped or failed:", err.message);
         }
@@ -36,39 +39,66 @@ function initFirebaseIfConfigured() {
 }
 
 /**
+ * Halts active escalation timers on open escalations from prior business dates (Day-Boundary Guard).
+ */
+async function processDayBoundaryExpirations() {
+    try {
+        const istOffsetMs = 5.5 * 60 * 60 * 1000;
+        const istDate = new Date(Date.now() + istOffsetMs);
+        const todayDate = new Date(Date.UTC(istDate.getUTCFullYear(), istDate.getUTCMonth(), istDate.getUTCDate()));
+
+        const priorOpenEscalations = await prisma.sla_escalations.findMany({
+            where: {
+                state: "OPEN",
+                business_date: { lt: todayDate },
+                due_at: { not: null }
+            },
+            select: { id: true, current_level: true, business_date: true }
+        });
+
+        if (priorOpenEscalations.length > 0) {
+            console.log(`🌅 [SLA WORKER] Halting active timers for ${priorOpenEscalations.length} unresolved escalation(s) from prior business dates...`);
+            for (const esc of priorOpenEscalations) {
+                await prisma.sla_escalations.update({
+                    where: { id: esc.id },
+                    data: { due_at: null }
+                });
+            }
+        }
+    } catch (err) {
+        console.error("❌ [SLA WORKER] Error in day-boundary expiration check:", err.message);
+    }
+}
+
+/**
  * Scans for recent completed cleaner reviews that have not yet been evaluated by the SLA engine.
+ * Filters out reviews that have already been evaluated (sla_evaluated = true) to prevent infinite loops.
  */
 async function scanUnevaluatedBreaches() {
     try {
         const sinceDate = new Date(Date.now() - 24 * 60 * 60 * 1000); // Past 24 hours
 
-        const unlinkedReviews = await prisma.cleaner_review.findMany({
-            where: {
-                status: "completed",
-                score: { not: null },
-                cleaner_user_id: { not: null },
-                location_id: { not: null },
-                company_id: { not: null },
-                escalation_id: null,
-                created_at: { gte: sinceDate }
-            },
-            select: {
-                id: true,
-                company_id: true,
-                location_id: true,
-                cleaner_user_id: true,
-                score: true,
-                created_at: true
-            },
-            orderBy: {
-                created_at: "asc"
-            },
-            take: 20
-        });
+        // Query only unlinked reviews that have not yet been evaluated
+        const unlinkedReviews = await prisma.$queryRaw`
+            SELECT id, company_id, location_id, cleaner_user_id, score, created_at, parent_review_id
+            FROM cleaner_review
+            WHERE status = 'completed'
+              AND score IS NOT NULL
+              AND cleaner_user_id IS NOT NULL
+              AND location_id IS NOT NULL
+              AND company_id IS NOT NULL
+              AND escalation_id IS NULL
+              AND COALESCE(sla_evaluated, FALSE) = FALSE
+              AND created_at >= ${sinceDate}
+            ORDER BY created_at ASC
+            LIMIT 20
+        `;
 
-        if (unlinkedReviews.length === 0) {
+        if (!unlinkedReviews || unlinkedReviews.length === 0) {
             return 0;
         }
+
+        console.log(`🔎 [SLA SCANNER] Found ${unlinkedReviews.length} unevaluated completed review(s). Processing...`);
 
         let evaluatedCount = 0;
         for (const rev of unlinkedReviews) {
@@ -79,6 +109,14 @@ async function scanUnevaluatedBreaches() {
                     companyId: rev.company_id,
                     score: rev.score
                 });
+
+                // Mark review as evaluated so it is never re-scanned
+                await prisma.$executeRaw`
+                    UPDATE cleaner_review
+                    SET sla_evaluated = TRUE
+                    WHERE id = ${rev.id}
+                `;
+
                 if (result.evaluated && result.breached) {
                     evaluatedCount++;
                 }
@@ -107,10 +145,16 @@ export async function processDueSlaEscalations() {
     const now = new Date();
 
     try {
-        // 1. Auto-discover and evaluate any newly completed reviews that breached SLA
+        // Ensure Firebase is ready for notifications
+        initFirebaseIfConfigured();
+
+        // 1. Day boundary guard: close timers on escalations from prior days
+        await processDayBoundaryExpirations();
+
+        // 2. Auto-discover and evaluate any newly completed reviews that breached SLA
         await scanUnevaluatedBreaches();
 
-        // 2. Find all active OPEN escalations where due_at <= NOW
+        // 3. Find all active OPEN escalations where due_at <= NOW
         const dueEscalations = await prisma.sla_escalations.findMany({
             where: {
                 state: "OPEN",
@@ -190,7 +234,6 @@ export function startSlaEscalationWorker() {
     return task;
 }
 
-
 /**
  * One-shot runner for Render Cron Jobs or CLI manual triggers.
  * Runs one scan/escalation cycle, disconnects database, and cleanly exits with appropriate status code.
@@ -221,12 +264,14 @@ export async function runOnce() {
 }
 
 // Standalone execution support: `node workers/slaEscalationWorker.js`
-const isDirectExecution = process.argv[1] && (
-    fileURLToPath(import.meta.url) === process.argv[1] ||
-    import.meta.url.endsWith(process.argv[1].replace(/\\/g, "/"))
+const currentFilePath = fileURLToPath(import.meta.url);
+const isDirectExecution = Boolean(
+    process.argv[1] && (
+        path.resolve(process.argv[1]).toLowerCase() === path.resolve(currentFilePath).toLowerCase() ||
+        currentFilePath.toLowerCase().endsWith(process.argv[1].toLowerCase().replace(/\\/g, "/"))
+    )
 );
 
 if (isDirectExecution || process.env.RUN_SLA_WORKER_ONCE === "true") {
     runOnce();
 }
-

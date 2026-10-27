@@ -481,14 +481,25 @@ router.post(
 router.patch("/user-review/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, email, phone } = req.body;
+    const { name, email, phone, description, reason_ids, reasonids, rating } = req.body;
 
-    console.log(`📝 Updating review ${id} with contact details`);
+    console.log(`📝 Updating review ${id} with details`);
 
     const updateData = {};
-    if (name) updateData.name = name;
-    if (email) updateData.email = email;
-    if (phone) updateData.phone = phone;
+    if (name !== undefined) updateData.name = name;
+    if (email !== undefined) updateData.email = email;
+    if (phone !== undefined) updateData.phone = phone;
+    if (description !== undefined) updateData.description = description;
+    if (rating !== undefined && !isNaN(parseFloat(rating))) updateData.rating = parseFloat(rating);
+
+    const rIds = reason_ids || reasonids;
+    if (rIds !== undefined) {
+      try {
+        updateData.reason_ids = Array.isArray(rIds) ? rIds : (typeof rIds === "string" ? JSON.parse(rIds) : rIds);
+      } catch (err) {
+        updateData.reason_ids = rIds;
+      }
+    }
 
     if (Object.keys(updateData).length === 0) {
       return res.status(200).json({
@@ -532,6 +543,10 @@ router.get("/user-review", async (req, res) => {
       sort_by,
       order,
       date,
+      from_date,
+      to_date,
+      start_date,
+      end_date,
     } = req.query;
 
     // Build where clause dynamically
@@ -546,8 +561,23 @@ router.get("/user-review", async (req, res) => {
       if (max_rating) where.rating.lte = parseFloat(max_rating);
     }
 
-    // Add date filter if provided
-    if (date) {
+    // Add date filter if provided (supports range or single date)
+    const rangeStart = from_date || start_date;
+    const rangeEnd = to_date || end_date;
+
+    if (rangeStart || rangeEnd) {
+      where.created_at = {};
+      if (rangeStart) {
+        const sDate = new Date(rangeStart);
+        sDate.setUTCHours(0, 0, 0, 0);
+        where.created_at.gte = sDate;
+      }
+      if (rangeEnd) {
+        const eDate = new Date(rangeEnd);
+        eDate.setUTCHours(23, 59, 59, 999);
+        where.created_at.lte = eDate;
+      }
+    } else if (date) {
       const startDate = new Date(date);
       startDate.setUTCHours(0, 0, 0, 0);
 
