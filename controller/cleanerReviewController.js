@@ -1426,14 +1426,21 @@ export async function updateCleanerReviewScore(req, res) {
     console.log("Updated hygiene score:", updatedHygieneScore.id);
 
     // Trigger SLA Escalation if enabled (defaults to true unless explicitly passed false)
-    const triggerEscalation = req.body.trigger_escalation !== false && req.body.trigger_escalation !== "false";
+    const triggerEscalation =
+      req.body.trigger_escalation !== false &&
+      req.body.trigger_escalation !== "false";
     if (triggerEscalation && updatedReview.location_id) {
       evaluateReviewSla({
         reviewId: updatedReview.id,
         locationId: updatedReview.location_id,
         companyId: updatedReview.company_id,
-        score: parseFloat(score)
-      }).catch((err) => console.error("Error triggering SLA evaluation in updateCleanerReviewScore:", err));
+        score: parseFloat(score),
+      }).catch((err) =>
+        console.error(
+          "Error triggering SLA evaluation in updateCleanerReviewScore:",
+          err,
+        ),
+      );
     }
 
     const safeSerialize = (obj) => {
@@ -1766,7 +1773,7 @@ export async function updateManagementScore(req, res) {
     if (review.location_id) {
       const effectiveSla = await resolveEffectiveWashroomSLA(
         review.location_id,
-        review.company_id
+        review.company_id,
       );
       if (!effectiveSla || !effectiveSla.enabled) {
         return res.status(400).json({
@@ -1899,10 +1906,7 @@ export async function getSlaCleanerActivities(req, res) {
 
   try {
     const whereClause = {
-      OR: [
-        { parent_review_id: null },
-        { review_type: "ORIGINAL" },
-      ],
+      OR: [{ parent_review_id: null }, { review_type: "ORIGINAL" }],
     };
 
     if (company_id) whereClause.company_id = BigInt(company_id);
@@ -1910,10 +1914,6 @@ export async function getSlaCleanerActivities(req, res) {
     const finalCleanerId = cleaner_user_id || cleaner_id;
     if (finalCleanerId && finalCleanerId !== "all") {
       whereClause.cleaner_user_id = BigInt(finalCleanerId);
-    }
-
-    if (status && status !== "all") {
-      whereClause.status = status;
     }
 
     if (start_date) {
@@ -2051,7 +2051,8 @@ export async function getSlaCleanerActivities(req, res) {
 
     // Group reviews into SLA activity lifecycles
     let activities = rootReviews.map((root) => {
-      const escalation = root.escalation || root.triggered_escalations?.[0] || null;
+      const escalation =
+        root.escalation || root.triggered_escalations?.[0] || null;
       const threshold = Number(root.location?.sla_config?.threshold ?? 8.0);
 
       // Collect all retries linked via parent_review_id or escalation
@@ -2070,7 +2071,7 @@ export async function getSlaCleanerActivities(req, res) {
       }
 
       const retries = Array.from(retryMap.values()).sort(
-        (a, b) => new Date(a.created_at) - new Date(b.created_at)
+        (a, b) => new Date(a.created_at) - new Date(b.created_at),
       );
 
       // Construct ordered attempts list
@@ -2080,7 +2081,10 @@ export async function getSlaCleanerActivities(req, res) {
           label: "Original Review",
           short_label: "Original",
           review_id: root.id.toString(),
-          score: root.score !== null && root.score !== undefined ? Number(Number(root.score).toFixed(1)) : null,
+          score:
+            root.score !== null && root.score !== undefined
+              ? Number(Number(root.score).toFixed(1))
+              : null,
           raw_score: root.score,
           original_score: root.original_score,
           is_modified: root.is_modified,
@@ -2089,14 +2093,21 @@ export async function getSlaCleanerActivities(req, res) {
           updated_at: root.updated_at,
           before_photo: root.before_photo || [],
           after_photo: root.after_photo || [],
-          photos_count: (root.before_photo?.length || 0) + (root.after_photo?.length || 0),
+          photos_count:
+            (root.before_photo?.length || 0) + (root.after_photo?.length || 0),
           initial_comment: root.initial_comment,
           final_comment: root.final_comment,
           tasks: root.tasks || [],
-          is_passed: root.score !== null && root.score !== undefined ? Number(root.score) >= threshold : false,
+          is_passed:
+            root.score !== null && root.score !== undefined
+              ? Number(root.score) >= threshold
+              : false,
         },
         ...retries.map((r, idx) => {
-          const scoreNum = r.score !== null && r.score !== undefined ? Number(Number(r.score).toFixed(1)) : null;
+          const scoreNum =
+            r.score !== null && r.score !== undefined
+              ? Number(Number(r.score).toFixed(1))
+              : null;
           return {
             attempt_no: idx + 2,
             label: `Retry #${idx + 1}`,
@@ -2111,7 +2122,8 @@ export async function getSlaCleanerActivities(req, res) {
             updated_at: r.updated_at,
             before_photo: r.before_photo || [],
             after_photo: r.after_photo || [],
-            photos_count: (r.before_photo?.length || 0) + (r.after_photo?.length || 0),
+            photos_count:
+              (r.before_photo?.length || 0) + (r.after_photo?.length || 0),
             initial_comment: r.initial_comment,
             final_comment: r.final_comment,
             tasks: r.tasks || [],
@@ -2121,7 +2133,9 @@ export async function getSlaCleanerActivities(req, res) {
       ];
 
       const latestAttempt = attempts[attempts.length - 1];
-      const maxRetries = Number(escalation?.max_retries ?? root.location?.sla_config?.max_retries ?? 2);
+      const maxRetries = Number(
+        escalation?.max_retries ?? root.location?.sla_config?.max_retries ?? 2,
+      );
       const retriesUsed = attempts.length - 1;
 
       // Determine SLA Lifecycle State
@@ -2134,7 +2148,10 @@ export async function getSlaCleanerActivities(req, res) {
           slaState = "RESOLVED";
           slaStatusLabel = "SLA Resolved";
           slaBadgeColor = "emerald";
-        } else if (escalation.state === "EXHAUSTED" || escalation.state === "CLOSED") {
+        } else if (
+          escalation.state === "EXHAUSTED" ||
+          escalation.state === "CLOSED"
+        ) {
           slaState = "EXHAUSTED";
           slaStatusLabel = "SLA Exhausted";
           slaBadgeColor = "red";
@@ -2159,7 +2176,12 @@ export async function getSlaCleanerActivities(req, res) {
         label: att.short_label,
         score: att.score,
         is_passed: att.is_passed,
-        status: att.score !== null ? (att.is_passed ? "Passed" : "Failed") : "Pending",
+        status:
+          att.score !== null
+            ? att.is_passed
+              ? "Passed"
+              : "Failed"
+            : "Pending",
       }));
 
       // Flatten preview photos
@@ -2210,16 +2232,65 @@ export async function getSlaCleanerActivities(req, res) {
       };
     });
 
+    // Compute aggregate KPI stats across all activities before status / SLA filtering
+    const totalTasks = activities.length;
+    const completedTasks = activities.filter(
+      (act) => act.status === "completed",
+    ).length;
+    const ongoingTasks = activities.filter(
+      (act) => act.status !== "completed",
+    ).length;
+    const thresholdPassed = activities.filter(
+      (act) =>
+        (act.latest_score !== null &&
+          act.latest_score !== undefined &&
+          act.latest_score >= act.sla_threshold) ||
+        act.sla_state === "NO_BREACH" ||
+        act.sla_state === "RESOLVED",
+    ).length;
+    const totalRetries = activities.reduce(
+      (acc, act) => acc + (act.retries_used || 0),
+      0,
+    );
+    const tasksWithRetries = activities.filter(
+      (act) => (act.retries_used || 0) > 0,
+    ).length;
+
+    const summary = {
+      total_tasks: totalTasks,
+      completed_tasks: completedTasks,
+      ongoing_tasks: ongoingTasks,
+      threshold_passed: thresholdPassed,
+      total_retries: totalRetries,
+      tasks_with_retries: tasksWithRetries,
+    };
+
+    // Apply status filtering (All, Ongoing, Completed)
+    if (status && status !== "all") {
+      if (status === "completed") {
+        activities = activities.filter((act) => act.status === "completed");
+      } else if (status === "ongoing") {
+        activities = activities.filter((act) => act.status !== "completed");
+      } else {
+        activities = activities.filter((act) => act.status === status);
+      }
+    }
+
     // Apply SLA status filtering if specified
     if (sla_status && sla_status !== "all") {
       const slaFilterUpper = sla_status.toUpperCase();
       activities = activities.filter((act) => {
-        if (slaFilterUpper === "NO_BREACH") return act.sla_state === "NO_BREACH";
+        if (slaFilterUpper === "NO_BREACH")
+          return act.sla_state === "NO_BREACH";
         if (slaFilterUpper === "BREACHED") return act.sla_state === "BREACHED";
-        if (slaFilterUpper === "RETRY_IN_PROGRESS" || slaFilterUpper === "IN_PROGRESS")
+        if (
+          slaFilterUpper === "RETRY_IN_PROGRESS" ||
+          slaFilterUpper === "IN_PROGRESS"
+        )
           return act.sla_state === "RETRY_IN_PROGRESS";
         if (slaFilterUpper === "RESOLVED") return act.sla_state === "RESOLVED";
-        if (slaFilterUpper === "EXHAUSTED") return act.sla_state === "EXHAUSTED";
+        if (slaFilterUpper === "EXHAUSTED")
+          return act.sla_state === "EXHAUSTED";
         return true;
       });
     }
@@ -2230,7 +2301,7 @@ export async function getSlaCleanerActivities(req, res) {
       activities = activities.filter(
         (act) =>
           act.cleaner_user?.name?.toLowerCase().includes(q) ||
-          act.location?.name?.toLowerCase().includes(q)
+          act.location?.name?.toLowerCase().includes(q),
       );
     }
 
@@ -2246,9 +2317,12 @@ export async function getSlaCleanerActivities(req, res) {
       if (obj === null || obj === undefined) return obj;
       if (typeof obj === "bigint") return obj.toString();
       if (obj instanceof Date) return obj.toISOString();
-      if (typeof obj === "object" && typeof obj.toNumber === "function") return obj.toNumber();
+      if (typeof obj === "object" && typeof obj.toNumber === "function")
+        return obj.toNumber();
       if (obj.d && obj.e !== undefined && obj.s !== undefined) {
-        return parseFloat(`${obj.s < 0 ? "-" : ""}${obj.d.join("")}e${obj.e - obj.d.length + 1}`);
+        return parseFloat(
+          `${obj.s < 0 ? "-" : ""}${obj.d.join("")}e${obj.e - obj.d.length + 1}`,
+        );
       }
       if (Array.isArray(obj)) return obj.map(safeSerialize);
       if (typeof obj === "object") {
@@ -2272,6 +2346,7 @@ export async function getSlaCleanerActivities(req, res) {
         has_next_page: currentPage < totalPages,
         has_prev_page: currentPage > 1,
       },
+      summary,
     });
   } catch (err) {
     console.error("Fetch SLA Cleaner Activities Error:", err);
@@ -2390,7 +2465,11 @@ export async function getSlaCleanerActivityById(req, res) {
             escalation_logs: {
               include: {
                 actor_user: {
-                  select: { id: true, name: true, role: { select: { name: true } } },
+                  select: {
+                    id: true,
+                    name: true,
+                    role: { select: { name: true } },
+                  },
                 },
               },
               orderBy: { created_at: "asc" },
@@ -2409,7 +2488,11 @@ export async function getSlaCleanerActivityById(req, res) {
             escalation_logs: {
               include: {
                 actor_user: {
-                  select: { id: true, name: true, role: { select: { name: true } } },
+                  select: {
+                    id: true,
+                    name: true,
+                    role: { select: { name: true } },
+                  },
                 },
               },
               orderBy: { created_at: "asc" },
@@ -2426,7 +2509,8 @@ export async function getSlaCleanerActivityById(req, res) {
       });
     }
 
-    const escalation = rootReview.escalation || rootReview.triggered_escalations?.[0] || null;
+    const escalation =
+      rootReview.escalation || rootReview.triggered_escalations?.[0] || null;
     const threshold = Number(rootReview.location?.sla_config?.threshold ?? 8.0);
 
     // Merge retry reviews
@@ -2445,7 +2529,7 @@ export async function getSlaCleanerActivityById(req, res) {
     }
 
     const retries = Array.from(retryMap.values()).sort(
-      (a, b) => new Date(a.created_at) - new Date(b.created_at)
+      (a, b) => new Date(a.created_at) - new Date(b.created_at),
     );
 
     // Build attempts array
@@ -2456,7 +2540,10 @@ export async function getSlaCleanerActivityById(req, res) {
         short_label: "Original",
         review_id: rootReview.id.toString(),
         cleaner_name: rootReview.cleaner_user?.name || "Cleaner",
-        score: rootReview.score !== null && rootReview.score !== undefined ? Number(Number(rootReview.score).toFixed(1)) : null,
+        score:
+          rootReview.score !== null && rootReview.score !== undefined
+            ? Number(Number(rootReview.score).toFixed(1))
+            : null,
         raw_score: rootReview.score,
         original_score: rootReview.original_score,
         is_modified: rootReview.is_modified,
@@ -2470,18 +2557,27 @@ export async function getSlaCleanerActivityById(req, res) {
         final_comment: rootReview.final_comment,
         before_photo: rootReview.before_photo || [],
         after_photo: rootReview.after_photo || [],
-        photos_count: (rootReview.before_photo?.length || 0) + (rootReview.after_photo?.length || 0),
+        photos_count:
+          (rootReview.before_photo?.length || 0) +
+          (rootReview.after_photo?.length || 0),
         hygiene_details: rootReview.hygiene_score?.details || null,
-        is_passed: rootReview.score !== null && rootReview.score !== undefined ? Number(rootReview.score) >= threshold : false,
+        is_passed:
+          rootReview.score !== null && rootReview.score !== undefined
+            ? Number(rootReview.score) >= threshold
+            : false,
       },
       ...retries.map((r, idx) => {
-        const scoreNum = r.score !== null && r.score !== undefined ? Number(Number(r.score).toFixed(1)) : null;
+        const scoreNum =
+          r.score !== null && r.score !== undefined
+            ? Number(Number(r.score).toFixed(1))
+            : null;
         return {
           attempt_no: idx + 2,
           label: `Retry #${idx + 1}`,
           short_label: `Retry #${idx + 1}`,
           review_id: r.id.toString(),
-          cleaner_name: r.cleaner_user?.name || rootReview.cleaner_user?.name || "Cleaner",
+          cleaner_name:
+            r.cleaner_user?.name || rootReview.cleaner_user?.name || "Cleaner",
           score: scoreNum,
           raw_score: r.score,
           original_score: r.original_score,
@@ -2496,7 +2592,8 @@ export async function getSlaCleanerActivityById(req, res) {
           final_comment: r.final_comment,
           before_photo: r.before_photo || [],
           after_photo: r.after_photo || [],
-          photos_count: (r.before_photo?.length || 0) + (r.after_photo?.length || 0),
+          photos_count:
+            (r.before_photo?.length || 0) + (r.after_photo?.length || 0),
           hygiene_details: r.hygiene_score?.details || null,
           is_passed: scoreNum !== null ? scoreNum >= threshold : false,
         };
@@ -2504,7 +2601,11 @@ export async function getSlaCleanerActivityById(req, res) {
     ];
 
     const latestAttempt = attempts[attempts.length - 1];
-    const maxRetries = Number(escalation?.max_retries ?? rootReview.location?.sla_config?.max_retries ?? 2);
+    const maxRetries = Number(
+      escalation?.max_retries ??
+        rootReview.location?.sla_config?.max_retries ??
+        2,
+    );
     const retriesUsed = attempts.length - 1;
 
     // SLA State determination
@@ -2517,7 +2618,10 @@ export async function getSlaCleanerActivityById(req, res) {
         slaState = "RESOLVED";
         slaStatusLabel = "SLA Resolved";
         slaBadgeColor = "emerald";
-      } else if (escalation.state === "EXHAUSTED" || escalation.state === "CLOSED") {
+      } else if (
+        escalation.state === "EXHAUSTED" ||
+        escalation.state === "CLOSED"
+      ) {
         slaState = "EXHAUSTED";
         slaStatusLabel = "SLA Exhausted";
         slaBadgeColor = "red";
@@ -2617,9 +2721,12 @@ export async function getSlaCleanerActivityById(req, res) {
       if (obj === null || obj === undefined) return obj;
       if (typeof obj === "bigint") return obj.toString();
       if (obj instanceof Date) return obj.toISOString();
-      if (typeof obj === "object" && typeof obj.toNumber === "function") return obj.toNumber();
+      if (typeof obj === "object" && typeof obj.toNumber === "function")
+        return obj.toNumber();
       if (obj.d && obj.e !== undefined && obj.s !== undefined) {
-        return parseFloat(`${obj.s < 0 ? "-" : ""}${obj.d.join("")}e${obj.e - obj.d.length + 1}`);
+        return parseFloat(
+          `${obj.s < 0 ? "-" : ""}${obj.d.join("")}e${obj.e - obj.d.length + 1}`,
+        );
       }
       if (Array.isArray(obj)) return obj.map(safeSerialize);
       if (typeof obj === "object") {
