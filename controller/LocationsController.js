@@ -879,11 +879,27 @@ export const getAllToilets = async (req, res) => {
       return res.status(401).json({ message: "Unauthorized" });
     }
 
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 15;
-    const skip = (page - 1) * limit;
+    const isFetchAll =
+      req.query.limit === "all" ||
+      req.query.all === "true" ||
+      parseInt(req.query.limit) >= 1000 ||
+      parseInt(req.query.limit) <= 0 ||
+      (!req.query.limit && !req.query.page);
 
-    const { company_id, type_id, include_unavailable } = req.query;
+    const page = parseInt(req.query.page) || 1;
+    const limit = isFetchAll ? undefined : (parseInt(req.query.limit) || 15);
+    const skip = isFetchAll ? undefined : (page - 1) * limit;
+
+    const {
+      company_id,
+      type_id,
+      include_unavailable,
+      facilityCompanyId,
+      facility_company_id,
+      search,
+      q,
+    } = req.query;
+    const searchQuery = (search || q || "").trim();
 
     const whereClause = {};
 
@@ -959,7 +975,7 @@ export const getAllToilets = async (req, res) => {
     }
     // =======================================================
 
-    // 3. Apply Company Filters
+    // 3. Apply Company & Facility Filters
     if (user.role_id === 1 && company_id) {
       whereClause.company_id = BigInt(company_id);
     } else if (user.role_id === 2 && company_id) {
@@ -968,9 +984,40 @@ export const getAllToilets = async (req, res) => {
       whereClause.company_id = BigInt(company_id);
     }
 
-    // 4. Apply Status Filters
+    const finalFacilityCompanyId = facilityCompanyId || facility_company_id;
+    if (finalFacilityCompanyId) {
+      whereClause.facility_company_id = BigInt(finalFacilityCompanyId);
+    }
+
+    // 4. Apply Status & Search Filters (using AND array to avoid overwriting OR)
+    if (!whereClause.AND) {
+      whereClause.AND = [];
+    } else if (!Array.isArray(whereClause.AND)) {
+      whereClause.AND = [whereClause.AND];
+    }
+
     if (include_unavailable !== "true") {
-      whereClause.OR = [{ status: true }, { status: null }];
+      whereClause.AND.push({
+        OR: [{ status: true }, { status: null }],
+      });
+    }
+
+    if (searchQuery) {
+      const isNumeric = /^\d+$/.test(searchQuery);
+      const searchOr = [
+        { name: { contains: searchQuery, mode: "insensitive" } },
+        { code: { contains: searchQuery, mode: "insensitive" } },
+      ];
+      if (isNumeric) {
+        try {
+          searchOr.push({ id: BigInt(searchQuery) });
+        } catch (_) {}
+      }
+      whereClause.AND.push({ OR: searchOr });
+    }
+
+    if (whereClause.AND.length === 0) {
+      delete whereClause.AND;
     }
 
     whereClause.deleted_at = null;
@@ -1111,9 +1158,9 @@ export const getAllToilets = async (req, res) => {
       data: result,
       pagination: {
         total: totalRecords,
-        page: page,
-        limit: limit,
-        last_page: Math.ceil(totalRecords / limit) || 1,
+        page: isFetchAll ? 1 : page,
+        limit: isFetchAll ? totalRecords : limit,
+        last_page: isFetchAll ? 1 : Math.ceil(totalRecords / limit) || 1,
       },
     });
   } catch (err) {
