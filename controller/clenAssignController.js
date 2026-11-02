@@ -155,6 +155,7 @@ export const getAllAssignments = async (req, res) => {
         id: true,
         status: true,
         assigned_on: true,
+        assigned_sections: true,
         locations: {
           select: { name: true }, // Only get location name
         },
@@ -550,6 +551,8 @@ export const createAssignment = async (req, res) => {
       type_id,
       status,
       role_id,
+      assigned_sections,
+      location_sections_map,
     } = req.body;
     const caller = req.user;
 
@@ -720,15 +723,24 @@ export const createAssignment = async (req, res) => {
         .status(400)
         .json({ status: "error", message: "Already assigned." });
 
-    const assignmentsToCreate = locationsToAssign.map((location) => ({
-      name: location.name,
-      cleaner_user_id: BigInt(cleaner_user_id),
-      company_id: BigInt(company_id),
-      type_id: null,
-      location_id: location.id,
-      status: status || "assigned",
-      role_id: parsedRoleId,
-    }));
+    const assignmentsToCreate = locationsToAssign.map((location) => {
+      let sections = [];
+      if (location_sections_map && location_sections_map[location.id.toString()]) {
+        sections = location_sections_map[location.id.toString()];
+      } else if (Array.isArray(assigned_sections)) {
+        sections = assigned_sections;
+      }
+      return {
+        name: location.name,
+        cleaner_user_id: BigInt(cleaner_user_id),
+        company_id: BigInt(company_id),
+        type_id: null,
+        location_id: location.id,
+        assigned_sections: Array.isArray(sections) ? sections.map((s) => Number(s)) : [],
+        status: status || "assigned",
+        role_id: parsedRoleId,
+      };
+    });
 
     const result = await prisma.cleaner_assignments.createMany({
       data: assignmentsToCreate,
@@ -754,7 +766,7 @@ export const updateAssignment = async (req, res) => {
         .json({ status: "error", message: "Invalid ID provided." });
     }
 
-    const { name, cleaner_user_id, company_id, type_id, location_id, status } =
+    const { name, cleaner_user_id, company_id, type_id, location_id, status, assigned_sections } =
       req.body;
 
     const updatedAssignment = await prisma.cleaner_assignments.update({
@@ -767,6 +779,9 @@ export const updateAssignment = async (req, res) => {
         company_id: company_id ? parseInt(company_id) : undefined,
         type_id: type_id ? parseInt(type_id) : undefined,
         location_id: location_id ? parseInt(location_id) : undefined,
+        assigned_sections: Array.isArray(assigned_sections)
+          ? assigned_sections.map((s) => Number(s))
+          : undefined,
         status,
         updated_at: new Date(),
       },
@@ -921,8 +936,15 @@ export const deleteAssignment = async (req, res) => {
 
 export const createAssignmentsForLocation = async (req, res) => {
   try {
-    const { location_id, cleaner_user_ids, company_id, status, role_id } =
-      req.body;
+    const {
+      location_id,
+      cleaner_user_ids,
+      company_id,
+      status,
+      role_id,
+      assigned_sections,
+      cleaner_sections_map,
+    } = req.body;
     const caller = req.user;
 
     // --- 1. Validation ---
@@ -1055,15 +1077,24 @@ export const createAssignmentsForLocation = async (req, res) => {
     }
     // --- END LIMIT CHECKS ---
 
-    const assignmentsToCreate = cleanersToAssign.map((cleanerId) => ({
-      name: location.name,
-      cleaner_user_id: BigInt(cleanerId),
-      company_id: BigInt(company_id),
-      type_id: null,
-      location_id: location.id,
-      role_id: parsedRoleId,
-      status: status || "assigned",
-    }));
+    const assignmentsToCreate = cleanersToAssign.map((cleanerId) => {
+      let sections = [];
+      if (cleaner_sections_map && cleaner_sections_map[cleanerId.toString()]) {
+        sections = cleaner_sections_map[cleanerId.toString()];
+      } else if (Array.isArray(assigned_sections)) {
+        sections = assigned_sections;
+      }
+      return {
+        name: location.name,
+        cleaner_user_id: BigInt(cleanerId),
+        company_id: BigInt(company_id),
+        type_id: null,
+        location_id: location.id,
+        assigned_sections: Array.isArray(sections) ? sections.map((s) => Number(s)) : [],
+        role_id: parsedRoleId,
+        status: status || "assigned",
+      };
+    });
 
     const result = await prisma.cleaner_assignments.createMany({
       data: assignmentsToCreate,

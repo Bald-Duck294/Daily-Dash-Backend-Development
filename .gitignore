@@ -14,3 +14,7 @@ test.json
 backup/
 safai-ai-firebase-adminsdk.json
 notification_implementation.md
+SLA_COMPLIANCE_SALARY_DEDUCTION_SPEC.md
+.gitignore
+SLA_NOTIFICATION_SCENARIOS_AND_MATRIX.md
+WASHROOM_SECTION_BASED_CLEANER_ASSIGNMENT_SPEC.md

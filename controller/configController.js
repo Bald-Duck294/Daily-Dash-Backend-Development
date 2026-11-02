@@ -4,6 +4,12 @@ import {
   validateAdditionalFeatures,
 } from "../utils/configValidator.js";
 import { DYNAMIC_MODULES } from "../utils/configRegistry.js";
+import {
+  syncDynamicConfigToUsageCategory,
+  getUsageCategoriesAsDynamicConfig,
+  getOrCreateCompanyUsageCategories,
+  getCategoryEntities,
+} from "../services/usageCategoryService.js";
 // Safe JSON Serialization Utility for BigInt structural bounds
 function convertBigInts(obj) {
   if (Array.isArray(obj)) return obj.map(convertBigInts);
@@ -77,6 +83,39 @@ export async function getConfigByRouteName(req, res) {
   }
 
   try {
+    // Intercept LOCATION_USAGE_CATEGORY to serve directly from usage_category table
+    if (name === "LOCATION_USAGE_CATEGORY") {
+      const dynamicConfig = await getUsageCategoriesAsDynamicConfig(companyId);
+      if (dynamicConfig) {
+        let configurationRecord = null;
+        if (companyId) {
+          configurationRecord = await prisma.configurations.findFirst({
+            where: { name, company_id: BigInt(companyId) },
+          });
+        }
+        if (!configurationRecord) {
+          configurationRecord = await prisma.configurations.findFirst({
+            where: { name, company_id: null },
+          });
+        }
+
+        const mergedRecord = {
+          ...(configurationRecord || {}),
+          id: configurationRecord?.id || 1,
+          name: "LOCATION_USAGE_CATEGORY",
+          company_id: companyId ? BigInt(companyId) : null,
+          is_active: configurationRecord ? configurationRecord.is_active : true,
+          description: dynamicConfig,
+          notes: configurationRecord?.notes || "Synchronized from usage_category table",
+        };
+
+        return res.status(200).json({
+          status: "success",
+          data: convertBigInts(mergedRecord),
+        });
+      }
+    }
+
     let configurationRecord = null;
 
     if (companyId) {
@@ -135,6 +174,11 @@ export async function updateConfigByRouteName(req, res) {
   const targetedCompanyId = company_id ? BigInt(company_id) : null;
 
   try {
+    // Synchronize changes to usage_category table for LOCATION_USAGE_CATEGORY
+    if (name === "LOCATION_USAGE_CATEGORY") {
+      await syncDynamicConfigToUsageCategory(description, targetedCompanyId);
+    }
+
     const activeTargetRecord = await prisma.configurations.findFirst({
       where: { name, company_id: targetedCompanyId },
     });
@@ -186,17 +230,65 @@ export async function getLocationSchema(req, res) {
   const targetedCompanyId = companyId ? BigInt(companyId) : null;
 
   try {
-    // 1. Fetch Usage Category
-    const usageConfig = await prisma.configurations.findFirst({
-      where: {
-        name: "LOCATION_USAGE_CATEGORY",
-        is_active: true,
-        OR: targetedCompanyId
-          ? [{ company_id: targetedCompanyId }, { company_id: null }]
-          : [{ company_id: null }],
-      },
-      orderBy: { company_id: "asc" },
-    });
+    // 1. Fetch Usage Categories directly from usage_category table (with company fallback to global / copy-on-demand)
+    let usageCategoryRecords = [];
+    if (targetedCompanyId) {
+      usageCategoryRecords = await getOrCreateCompanyUsageCategories(targetedCompanyId);
+    } else {
+      usageCategoryRecords = await prisma.usage_category.findMany({
+        where: {
+          company_id: null,
+          is_active: true,
+          deleted_at: null,
+        },
+        orderBy: { id: "asc" },
+      });
+    }
+
+    // Process Usage Categories
+    let formattedUsageCategories = [];
+    if (usageCategoryRecords && usageCategoryRecords.length > 0) {
+      formattedUsageCategories = usageCategoryRecords.map((category) => {
+        const entities = getCategoryEntities(category);
+        return {
+          id: category.code || category.name.toLowerCase().replace(/[^a-z0-9]+/g, "_"),
+          label: category.name,
+          usageCategoryId: category.id,
+          entities: entities.map((entity) => ({
+            id: entity.id,
+            label: entity.label,
+            isAiScoringEnabled: entity.isAiScoringEnabled ?? false,
+            defaultValue: 0,
+          })),
+        };
+      });
+    } else {
+      // Fallback to configurations table if usage_category has no entries yet
+      const usageConfig = await prisma.configurations.findFirst({
+        where: {
+          name: "LOCATION_USAGE_CATEGORY",
+          is_active: true,
+          OR: targetedCompanyId
+            ? [{ company_id: targetedCompanyId }, { company_id: null }]
+            : [{ company_id: null }],
+        },
+        orderBy: { company_id: "asc" },
+      });
+      if (usageConfig?.description?.categories) {
+        formattedUsageCategories = usageConfig.description.categories.map(
+          (category) => ({
+            id: category.id,
+            label: category.label,
+            entities: (category.entities || []).map((entity) => ({
+              id: entity.id,
+              label: entity.label,
+              isAiScoringEnabled: entity.isAiScoringEnabled,
+              defaultValue: 0,
+            })),
+          }),
+        );
+      }
+    }
 
     // 2. Fetch Additional Features
     const featuresConfig = await prisma.configurations.findFirst({
@@ -209,23 +301,6 @@ export async function getLocationSchema(req, res) {
       },
       orderBy: { company_id: "asc" },
     });
-
-    // Process Usage Categories
-    let formattedUsageCategories = [];
-    if (usageConfig?.description?.categories) {
-      formattedUsageCategories = usageConfig.description.categories.map(
-        (category) => ({
-          id: category.id,
-          label: category.label,
-          entities: (category.entities || []).map((entity) => ({
-            id: entity.id,
-            label: entity.label,
-            isAiScoringEnabled: entity.isAiScoringEnabled,
-            defaultValue: 0,
-          })),
-        }),
-      );
-    }
 
     // Process Additional Features
     let formattedAdditionalFeatures = [];

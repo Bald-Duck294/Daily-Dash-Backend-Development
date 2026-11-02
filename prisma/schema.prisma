@@ -42,6 +42,7 @@ model companies {
   user_review             user_review[]
   user_review_qr          user_review_qr[]
   users                   users[]
+  usageCategories         usage_category[]
 }
 
 model hygiene_scores {
@@ -240,6 +241,7 @@ model cleaner_review {
   review_type           String                @default("ORIGINAL") @db.VarChar(20)
   is_latest             Boolean               @default(true)
   shift_id              BigInt?
+  sla_evaluated         Boolean?              @default(false)
   cleaner_user          users?                @relation("CleanerReviews", fields: [cleaner_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   company               companies?            @relation("CompanyReviews", fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   escalation            sla_escalations?      @relation("ReviewEscalation", fields: [escalation_id], references: [id])
@@ -284,24 +286,40 @@ model spatial_ref_sys {
 }
 
 model cleaner_assignments {
-  id              BigInt     @id @default(autoincrement())
-  name            String     @db.VarChar(255)
-  cleaner_user_id BigInt
-  company_id      BigInt
-  type_id         BigInt?
-  location_id     BigInt?
-  status          String?    @default("unassigned") @db.VarChar(50)
-  assigned_on     DateTime?  @default(now()) @db.Timestamp(6)
-  released_on     DateTime?  @db.Timestamp(6)
-  created_at      DateTime?  @default(now()) @db.Timestamp(6)
-  updated_at      DateTime?  @default(now()) @db.Timestamp(6)
-  supervisor_id   BigInt?
-  role_id         Int?
-  deleted_at      DateTime?
-  cleaner_user    users      @relation("CleanerUser", fields: [cleaner_user_id], references: [id])
-  role            Role?      @relation(fields: [role_id], references: [id])
-  supervisor      users?     @relation("Supervisor", fields: [supervisor_id], references: [id])
-  locations       locations? @relation(fields: [location_id], references: [id], onDelete: Cascade, map: "fk_assignments_location")
+  id                BigInt     @id @default(autoincrement())
+  name              String     @db.VarChar(255)
+  cleaner_user_id   BigInt
+  company_id        BigInt
+  type_id           BigInt?
+  location_id       BigInt?
+  status            String?    @default("unassigned") @db.VarChar(50)
+  assigned_sections Int[]      @default([])
+  assigned_on       DateTime?  @default(now()) @db.Timestamp(6)
+  released_on       DateTime?  @db.Timestamp(6)
+  created_at        DateTime?  @default(now()) @db.Timestamp(6)
+  updated_at        DateTime?  @default(now()) @db.Timestamp(6)
+  supervisor_id     BigInt?
+  role_id           Int?
+  deleted_at        DateTime?
+  cleaner_user      users      @relation("CleanerUser", fields: [cleaner_user_id], references: [id])
+  role              Role?      @relation(fields: [role_id], references: [id])
+  supervisor        users?     @relation("Supervisor", fields: [supervisor_id], references: [id])
+  locations         locations? @relation(fields: [location_id], references: [id], onDelete: Cascade, map: "fk_assignments_location")
+}
+
+model usage_category {
+  id         Int     @id @default(autoincrement())
+  company_id BigInt?
+
+  name       String     @db.VarChar(100) // "Men", "Women", "Handicap", "Baby Care"
+  code       String?    @db.VarChar(50) // "MEN", "WOMEN", "HANDICAP"
+  fixtures   Json       @default("{}") @db.Json
+  is_active  Boolean    @default(true)
+  metadata   Json?      @db.Json
+  created_at DateTime?  @default(now()) @db.Timestamp(6)
+  updated_at DateTime?  @default(now()) @db.Timestamp(6)
+  deleted_at DateTime?
+  company    companies? @relation(fields: [company_id], references: [id], onDelete: Cascade, map: "fk_usage_cat_company")
 }
 
 model Role {
