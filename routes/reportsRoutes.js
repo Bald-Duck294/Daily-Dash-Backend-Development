@@ -26,9 +26,9 @@ reportRouter.get("/zones", getAvailableZones);
 // ✅ NEW: Daily Task Report routes
 reportRouter.get("/daily-task", verifyToken, getDailyCleaningReport);
 reportRouter.get("/detailed-cleaning", verifyToken, getDetailedCleaningReport);
-reportRouter.get("/washroom-report", verifyToken, getWashroomReport)
-reportRouter.get("/cleaner-report", verifyToken, getCleanerReport)
-reportRouter.get("/washroom-daily-scores", getWashroomDailyScoresReport)
+reportRouter.get("/washroom-report", verifyToken, getWashroomReport);
+reportRouter.get("/cleaner-report", verifyToken, getCleanerReport);
+reportRouter.get("/washroom-daily-scores", verifyToken, getWashroomDailyScoresReport);
 
 
 

@@ -2299,14 +2299,17 @@ export const getDetailedCleaningReport = async (req, res) => {
 export const getWashroomDailyScoresReport = async (req, res) => {
   console.log("🔍 Generating Washroom Daily Scores Report");
   try {
-    const { company_id, start_date, end_date, type_id } = req.query;
-    // const user = req.user;
+    const { company_id, start_date, end_date, type_id, location_id } = req.query;
+    const user = req.user;
 
     console.log("📥 Request Params:", {
       company_id,
       start_date,
       end_date,
       type_id,
+      location_id,
+      user_id: user?.id,
+      user_role_id: user?.role_id,
     });
 
     // ✅ VALIDATION
@@ -2329,9 +2332,6 @@ export const getWashroomDailyScoresReport = async (req, res) => {
     const endDateTime = new Date(end_date);
     endDateTime.setHours(23, 59, 59, 999);
 
-    // console.log(start_date, end_date, "original dates");
-    // console.log(startDateTime, "start date modified ")
-    // console.log(endDateTime, "end date modified ")
     if (startDateTime > endDateTime) {
       return res.status(400).json({
         status: "error",
@@ -2360,10 +2360,26 @@ export const getWashroomDailyScoresReport = async (req, res) => {
       deleted_at: null,
     };
 
-    // const roleFilter = await RBACFilterService.getLocationFilter(user, "washroom_daily_scores");
-    // Object.assign(locationWhereClause, roleFilter);
+    const isAdmin = user?.role_id === 1 || user?.role_id === 2;
+    if (!isAdmin && user?.id) {
+      const authorizedLocationIds = await RBACFilterService.getAuthorizedLocationIds(
+        user.id,
+        company_id
+      );
 
-    if (type_id && type_id !== "undefined") {
+      if (location_id && location_id !== "undefined" && location_id !== "all") {
+        const isAuthorized = authorizedLocationIds.some(
+          (locId) => locId.toString() === location_id.toString()
+        );
+        locationWhereClause.id = isAuthorized ? BigInt(location_id) : { in: [] };
+      } else {
+        locationWhereClause.id = { in: authorizedLocationIds };
+      }
+    } else if (location_id && location_id !== "undefined" && location_id !== "all") {
+      locationWhereClause.id = BigInt(location_id);
+    }
+
+    if (type_id && type_id !== "undefined" && type_id !== "all") {
       locationWhereClause.type_id = BigInt(type_id);
     }
 
@@ -3051,12 +3067,14 @@ export const getPerformanceSummary = async (req, res) => {
 
 export const getCleanersForReport = async (req, res) => {
   try {
-    const { company_id, location_id } = req.query;
+    const { company_id, location_id, type_id } = req.query;
     const user = req.user; // ✅ From verifyToken middleware
 
-    console.log("🔍 Fetching cleaners:", {
+    console.log("🔍 Fetching cleaners for report:", {
       company_id,
       location_id,
+      type_id,
+      user_id: user?.id,
       user_role_id: user?.role_id,
     });
 
@@ -3067,110 +3085,246 @@ export const getCleanersForReport = async (req, res) => {
       });
     }
 
-    // ✅ STEP 1: Get RBAC-filtered locations for this user
-    const locationWhereClause = {
-      company_id: BigInt(company_id),
-      status: true,
-      deleted_at: null,
-    };
+    const isAdmin = user?.role_id === 1 || user?.role_id === 2;
+    const hasLocation =
+      location_id && location_id !== "undefined" && location_id !== "all";
+    const hasZone = type_id && type_id !== "undefined" && type_id !== "all";
 
-    const roleFilter = await RBACFilterService.getLocationFilter(
-      user,
-      "cleaner_list",
-    );
-    Object.assign(locationWhereClause, roleFilter);
+    if (isAdmin) {
+      // 🟢 ADMIN / SUPER ADMIN
+      if (!hasLocation && !hasZone) {
+        // Admin selected "All Locations" and "All Zones" -> Return ALL active cleaners for the company
+        const cleaners = await prisma.users.findMany({
+          where: {
+            company_id: BigInt(company_id),
+            role_id: 5, // Cleaner role
+            deleted_at: null,
+          },
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+          },
+          orderBy: {
+            name: "asc",
+          },
+        });
 
-    // If specific location_id is provided, add it to filter
-    if (location_id && location_id !== "undefined") {
-      locationWhereClause.id = BigInt(location_id);
-    }
+        const formattedCleaners = cleaners.map((cleaner) => ({
+          id: cleaner.id.toString(),
+          name: cleaner.name,
+          phone: cleaner.phone || "N/A",
+        }));
 
-    const allowedLocations = await prisma.locations.findMany({
-      where: locationWhereClause,
-      select: { id: true },
-    });
+        return res.status(200).json({
+          status: "success",
+          data: formattedCleaners,
+          count: formattedCleaners.length,
+        });
+      }
 
-    const allowedLocationIds = allowedLocations.map((loc) => loc.id);
+      // If location or zone is specified for Admin:
+      let targetLocationIds = [];
+      if (hasLocation) {
+        targetLocationIds = [BigInt(location_id)];
+      } else if (hasZone) {
+        const zoneLocations = await prisma.locations.findMany({
+          where: {
+            company_id: BigInt(company_id),
+            type_id: BigInt(type_id),
+            status: true,
+            deleted_at: null,
+          },
+          select: { id: true },
+        });
+        targetLocationIds = zoneLocations.map((l) => l.id);
+      }
 
-    console.log(`✅ User has access to ${allowedLocationIds.length} locations`);
+      if (targetLocationIds.length === 0) {
+        return res.status(200).json({
+          status: "success",
+          data: [],
+          count: 0,
+          message: "No locations found for selected filters",
+        });
+      }
 
-    if (allowedLocationIds.length === 0) {
+      const assignments = await prisma.cleaner_assignments.findMany({
+        where: {
+          location_id: { in: targetLocationIds },
+          company_id: BigInt(company_id),
+          deleted_at: null,
+          status: "assigned",
+        },
+        select: {
+          cleaner_user_id: true,
+        },
+        distinct: ["cleaner_user_id"],
+      });
+
+      const cleanerUserIds = [
+        ...new Set(assignments.map((a) => a.cleaner_user_id).filter(Boolean)),
+      ];
+
+      if (cleanerUserIds.length === 0) {
+        return res.status(200).json({
+          status: "success",
+          data: [],
+          count: 0,
+          message: "No cleaners assigned to the selected location(s)",
+        });
+      }
+
+      const cleaners = await prisma.users.findMany({
+        where: {
+          id: { in: cleanerUserIds },
+          company_id: BigInt(company_id),
+          role_id: 5,
+          deleted_at: null,
+        },
+        select: {
+          id: true,
+          name: true,
+          phone: true,
+        },
+        orderBy: {
+          name: "asc",
+        },
+      });
+
+      const formattedCleaners = cleaners.map((cleaner) => ({
+        id: cleaner.id.toString(),
+        name: cleaner.name,
+        phone: cleaner.phone || "N/A",
+      }));
+
       return res.status(200).json({
         status: "success",
-        data: [],
-        count: 0,
-        message: "No locations accessible to your role",
+        data: formattedCleaners,
+        count: formattedCleaners.length,
       });
-    }
+    } else {
+      // 🔵 SUPERVISOR / NON-ADMIN
+      if (!user?.id) {
+        return res
+          .status(401)
+          .json({ status: "error", message: "User not authenticated" });
+      }
 
-    // ✅ STEP 2: Get cleaners assigned to these allowed locations
-    const assignments = await prisma.cleaner_assignments.findMany({
-      where: {
-        location_id: { in: allowedLocationIds }, // ✅ Only RBAC-filtered locations
-        company_id: BigInt(company_id),
-        deleted_at: null,
-        status: "assigned", // ✅ Only active assignments
-      },
-      select: {
-        cleaner_user_id: true,
-      },
-      distinct: ["cleaner_user_id"], // Get unique cleaner IDs
-    });
+      const authorizedLocationIds =
+        await RBACFilterService.getAuthorizedLocationIds(
+          user.id,
+          company_id,
+        );
 
-    console.log(
-      `📋 Found ${assignments.length} cleaner assignments for allowed locations`,
-    );
+      if (authorizedLocationIds.length === 0) {
+        return res.status(200).json({
+          status: "success",
+          data: [],
+          count: 0,
+          message: "No locations assigned to supervisor",
+        });
+      }
 
-    // Extract unique cleaner user IDs
-    const cleanerUserIds = [
-      ...new Set(assignments.map((a) => a.cleaner_user_id).filter(Boolean)),
-    ];
+      let targetLocationIds = [];
+      if (hasLocation) {
+        const isAuthorized = authorizedLocationIds.some(
+          (locId) => locId.toString() === location_id.toString(),
+        );
+        if (!isAuthorized) {
+          return res.status(200).json({
+            status: "success",
+            data: [],
+            count: 0,
+            message: "Location not accessible to supervisor",
+          });
+        }
+        targetLocationIds = [BigInt(location_id)];
+      } else if (hasZone) {
+        const zoneLocations = await prisma.locations.findMany({
+          where: {
+            id: { in: authorizedLocationIds },
+            company_id: BigInt(company_id),
+            type_id: BigInt(type_id),
+            status: true,
+            deleted_at: null,
+          },
+          select: { id: true },
+        });
+        targetLocationIds = zoneLocations.map((l) => l.id);
+      } else {
+        targetLocationIds = authorizedLocationIds;
+      }
 
-    if (cleanerUserIds.length === 0) {
+      if (targetLocationIds.length === 0) {
+        return res.status(200).json({
+          status: "success",
+          data: [],
+          count: 0,
+          message: "No matching locations found for supervisor",
+        });
+      }
+
+      const assignments = await prisma.cleaner_assignments.findMany({
+        where: {
+          location_id: { in: targetLocationIds },
+          company_id: BigInt(company_id),
+          deleted_at: null,
+          status: "assigned",
+        },
+        select: {
+          cleaner_user_id: true,
+        },
+        distinct: ["cleaner_user_id"],
+      });
+
+      const loggedInUserIdStr = user.id.toString();
+      const cleanerUserIds = [
+        ...new Set(
+          assignments
+            .map((a) => a.cleaner_user_id)
+            .filter((id) => id && id.toString() !== loggedInUserIdStr),
+        ),
+      ];
+
+      if (cleanerUserIds.length === 0) {
+        return res.status(200).json({
+          status: "success",
+          data: [],
+          count: 0,
+          message: "No cleaners assigned to supervisor washroom(s)",
+        });
+      }
+
+      const cleaners = await prisma.users.findMany({
+        where: {
+          id: { in: cleanerUserIds },
+          company_id: BigInt(company_id),
+          role_id: 5,
+          deleted_at: null,
+        },
+        select: {
+          id: true,
+          name: true,
+          phone: true,
+        },
+        orderBy: {
+          name: "asc",
+        },
+      });
+
+      const formattedCleaners = cleaners.map((cleaner) => ({
+        id: cleaner.id.toString(),
+        name: cleaner.name,
+        phone: cleaner.phone || "N/A",
+      }));
+
       return res.status(200).json({
         status: "success",
-        data: [],
-        count: 0,
-        message: location_id
-          ? "No cleaners assigned to this location"
-          : "No cleaners assigned to accessible locations",
+        data: formattedCleaners,
+        count: formattedCleaners.length,
       });
     }
-
-    // ✅ STEP 3: Fetch user details for those cleaner IDs
-    const cleaners = await prisma.users.findMany({
-      where: {
-        id: { in: cleanerUserIds },
-        company_id: BigInt(company_id),
-        role_id: 5, // Cleaner role
-        deleted_at: null,
-      },
-      select: {
-        id: true,
-        name: true,
-        phone: true,
-      },
-      orderBy: {
-        name: "asc",
-      },
-    });
-
-    console.log(
-      `✅ Found ${cleaners.length} active cleaners for accessible locations`,
-    );
-
-    // ✅ Manually convert BigInt to String
-    const formattedCleaners = cleaners.map((cleaner) => ({
-      id: cleaner.id.toString(),
-      name: cleaner.name,
-      phone: cleaner.phone || "N/A",
-    }));
-
-    res.status(200).json({
-      status: "success",
-      data: formattedCleaners,
-      count: formattedCleaners.length,
-    });
   } catch (error) {
     console.error("❌ Error fetching cleaners:", error);
     res.status(500).json({
@@ -3185,9 +3339,10 @@ export const getLocationsForReport = async (req, res) => {
     const { company_id, type_id } = req.query;
     const user = req.user; // ✅ From verifyToken middleware
 
-    console.log("🔍 Fetching locations:", {
+    console.log("🔍 Fetching locations for report:", {
       company_id,
       type_id,
+      user_id: user?.id,
       user_role_id: user?.role_id,
     });
 
@@ -3205,16 +3360,18 @@ export const getLocationsForReport = async (req, res) => {
       deleted_at: null,
     };
 
-    // ✅ Apply RBAC location filter
-    const roleFilter = await RBACFilterService.getLocationFilter(
-      user,
-      "location_list",
-    );
-    Object.assign(whereClause, roleFilter);
+    const isAdmin = user?.role_id === 1 || user?.role_id === 2;
+    if (!isAdmin && user?.id) {
+      const authorizedLocationIds =
+        await RBACFilterService.getAuthorizedLocationIds(
+          user.id,
+          company_id,
+        );
+      whereClause.id = { in: authorizedLocationIds };
+    }
 
     // Add type_id filter if provided
-    if (type_id && type_id !== "undefined") {
-      console.log("✅ Filtering by type_id:", type_id);
+    if (type_id && type_id !== "undefined" && type_id !== "all") {
       whereClause.type_id = BigInt(type_id);
     }
 
