@@ -540,6 +540,7 @@ router.get("/user-review", async (req, res) => {
       max_rating,
       limit,
       offset,
+      page,
       sort_by,
       order,
       date,
@@ -547,18 +548,44 @@ router.get("/user-review", async (req, res) => {
       to_date,
       start_date,
       end_date,
+      search,
+      issues_only,
     } = req.query;
+
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const limitNum = Math.max(1, parseInt(limit) || 50);
+    const skipNum =
+      offset !== undefined && offset !== null && offset !== ""
+        ? Math.max(0, parseInt(offset))
+        : (pageNum - 1) * limitNum;
 
     // Build where clause dynamically
     const where = {};
 
-    if (location_id) where.location_id = BigInt(location_id);
+    if (location_id && location_id !== "all") where.location_id = BigInt(location_id);
     if (company_id) where.company_id = BigInt(company_id);
 
     if (min_rating || max_rating) {
       where.rating = {};
       if (min_rating) where.rating.gte = parseFloat(min_rating);
       if (max_rating) where.rating.lte = parseFloat(max_rating);
+    }
+
+    if (issues_only === "true" || issues_only === true) {
+      const ISSUE_REASON_IDS = Array.from({ length: 50 }, (_, i) => i + 1);
+      where.reason_ids = { hasSome: ISSUE_REASON_IDS };
+    }
+
+    if (search && search.trim()) {
+      const q = search.trim();
+      where.OR = [
+        { name: { contains: q, mode: "insensitive" } },
+        { phone: { contains: q, mode: "insensitive" } },
+        { email: { contains: q, mode: "insensitive" } },
+        { description: { contains: q, mode: "insensitive" } },
+        { token_number: { contains: q, mode: "insensitive" } },
+        { locations: { name: { contains: q, mode: "insensitive" } } },
+      ];
     }
 
     // Add date filter if provided (supports range or single date)
@@ -568,26 +595,42 @@ router.get("/user-review", async (req, res) => {
     if (rangeStart || rangeEnd) {
       where.created_at = {};
       if (rangeStart) {
-        const sDate = new Date(rangeStart);
-        sDate.setUTCHours(0, 0, 0, 0);
-        where.created_at.gte = sDate;
+        const [sy, sm, sd] = rangeStart.split("-").map(Number);
+        if (!isNaN(sy) && !isNaN(sm) && !isNaN(sd)) {
+          where.created_at.gte = new Date(sy, sm - 1, sd, 0, 0, 0, 0);
+        } else {
+          const sDate = new Date(rangeStart);
+          sDate.setHours(0, 0, 0, 0);
+          where.created_at.gte = sDate;
+        }
       }
       if (rangeEnd) {
-        const eDate = new Date(rangeEnd);
-        eDate.setUTCHours(23, 59, 59, 999);
-        where.created_at.lte = eDate;
+        const [ey, em, ed] = rangeEnd.split("-").map(Number);
+        if (!isNaN(ey) && !isNaN(em) && !isNaN(ed)) {
+          where.created_at.lte = new Date(ey, em - 1, ed, 23, 59, 59, 999);
+        } else {
+          const eDate = new Date(rangeEnd);
+          eDate.setHours(23, 59, 59, 999);
+          where.created_at.lte = eDate;
+        }
       }
     } else if (date) {
-      const startDate = new Date(date);
-      startDate.setUTCHours(0, 0, 0, 0);
-
-      const endDate = new Date(startDate);
-      endDate.setDate(startDate.getDate() + 1);
-
-      where.created_at = {
-        gte: startDate,
-        lt: endDate,
-      };
+      const [y, m, d] = date.split("-").map(Number);
+      if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+        where.created_at = {
+          gte: new Date(y, m - 1, d, 0, 0, 0, 0),
+          lte: new Date(y, m - 1, d, 23, 59, 59, 999),
+        };
+      } else {
+        const startDate = new Date(date);
+        startDate.setHours(0, 0, 0, 0);
+        const endDate = new Date(startDate);
+        endDate.setDate(startDate.getDate() + 1);
+        where.created_at = {
+          gte: startDate,
+          lt: endDate,
+        };
+      }
     }
 
     // Build orderBy clause
@@ -596,21 +639,52 @@ router.get("/user-review", async (req, res) => {
     const sortOrder = order || "desc";
     orderBy[sortField] = sortOrder;
 
-    // Fetch reviews with pagination
-    const reviews = await prisma.user_review_qr.findMany({
-      where,
-      orderBy,
-      take: limit ? parseInt(limit) : undefined,
-      skip: offset ? parseInt(offset) : undefined,
-      include: {
-        locations: true,
-      },
-    });
+    // Fetch reviews with pagination + total count in parallel
+    const [reviews, totalCount] = await Promise.all([
+      prisma.user_review_qr.findMany({
+        where,
+        orderBy,
+        take: limitNum,
+        skip: skipNum,
+        include: {
+          locations: true,
+        },
+      }),
+      prisma.user_review_qr.count({ where }),
+    ]);
 
-    // Get total count for pagination
-    const totalCount = await prisma.user_review_qr.count({ where });
+    // Calculate scoped KPI stats (company + location level)
+    const baseStatsWhere = {};
+    if (company_id) baseStatsWhere.company_id = BigInt(company_id);
+    if (location_id && location_id !== "all") baseStatsWhere.location_id = BigInt(location_id);
 
-    console.log(`Fetched ${reviews.length} reviews`);
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    const ISSUE_REASON_IDS = Array.from({ length: 50 }, (_, i) => i + 1);
+
+    const [totalLifetime, todayCount, avgResult, issuesCount] = await Promise.all([
+      prisma.user_review_qr.count({ where: baseStatsWhere }),
+      prisma.user_review_qr.count({
+        where: { ...baseStatsWhere, created_at: { gte: todayStart, lte: todayEnd } },
+      }),
+      prisma.user_review_qr.aggregate({
+        where: baseStatsWhere,
+        _avg: { rating: true },
+      }),
+      prisma.user_review_qr.count({
+        where: { ...baseStatsWhere, reason_ids: { hasSome: ISSUE_REASON_IDS } },
+      }),
+    ]);
+
+    const stats = {
+      total: totalLifetime,
+      today: todayCount,
+      avgRating: avgResult._avg?.rating ? Number(avgResult._avg.rating.toFixed(1)) : 0,
+      issuesCount: issuesCount,
+    };
+
+    console.log(`Fetched ${reviews.length} reviews for page ${pageNum} (total: ${totalCount})`);
 
     res.status(200).json({
       success: true,
@@ -624,9 +698,12 @@ router.get("/user-review", async (req, res) => {
       }),
       pagination: {
         total: totalCount,
-        limit: limit ? parseInt(limit) : reviews.length,
-        offset: offset ? parseInt(offset) : 0,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(totalCount / limitNum) || 1,
+        offset: skipNum,
       },
+      stats,
       message: "Reviews fetched successfully!",
     });
   } catch (error) {
