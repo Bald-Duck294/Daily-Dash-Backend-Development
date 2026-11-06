@@ -250,65 +250,171 @@ export const deleteCompany = async (req, res) => {
   try {
     const { id } = req.params;
     const companyId = BigInt(id);
-    console.log(companyId, "companyId");
+    const mode = (
+      req.query.mode ||
+      req.body?.mode ||
+      (req.query.hard === "true" || req.query.type === "hard" ? "hard" : "soft")
+    ).toLowerCase();
+
+    console.log(`Deleting company ${companyId} with mode: ${mode}`);
+
+    // Verify company exists
+    const existingCompany = await prisma.companies.findUnique({
+      where: { id: companyId },
+    });
+
+    if (!existingCompany) {
+      return res.status(404).json({ message: "Company not found" });
+    }
+
+    // ==========================================
+    // OPTION 1: SOFT DELETE (Archive & Deactivate)
+    // ==========================================
+    if (mode === "soft") {
+      const now = new Date();
+
+      // Soft delete the company record
+      await prisma.companies.update({
+        where: { id: companyId },
+        data: {
+          deleted_at: now,
+          status: false,
+        },
+      });
+
+      // Soft delete related entities where deleted_at column is supported
+      await Promise.all([
+        prisma.locations.updateMany({
+          where: { company_id: companyId, deleted_at: null },
+          data: { deleted_at: now },
+        }),
+        prisma.location_types.updateMany({
+          where: { company_id: companyId, deleted_at: null },
+          data: { deleted_at: now },
+        }),
+        prisma.users.updateMany({
+          where: { company_id: companyId, deleted_at: null },
+          data: { deleted_at: now, status: "inactive" },
+        }),
+        prisma.shifts.updateMany({
+          where: { company_id: companyId, deleted_at: null },
+          data: { deleted_at: now },
+        }),
+        prisma.cleaner_assignments.updateMany({
+          where: { company_id: companyId, deleted_at: null },
+          data: { deleted_at: now },
+        }),
+        prisma.facility_companies.updateMany({
+          where: { company_id: companyId, deleted_at: null },
+          data: { deleted_at: now, status: false },
+        }),
+        prisma.usage_category.updateMany({
+          where: { company_id: companyId, deleted_at: null },
+          data: { deleted_at: now },
+        }),
+      ]);
+
+      return res.status(200).json({
+        success: true,
+        mode: "soft",
+        message: "Company soft-deleted (archived) successfully.",
+      });
+    }
+
+    // ==========================================
+    // OPTION 2: HARD DELETE (Permanent Destruction)
+    // ==========================================
     const targetIds = [companyId];
 
-    // Step 1: Fetch ALL user IDs (including admins) for this company
+    // Step 1: Fetch ALL user IDs for this company
     const usersToDelete = await prisma.users.findMany({
       where: { company_id: { in: targetIds } },
       select: { id: true },
     });
     const userIds = usersToDelete.map((u) => u.id);
 
-    // Step 2: Delete all leaf-level dependent records in parallel
+    // Step 2: Break self-referencing user foreign keys (created_by)
+    if (userIds.length > 0) {
+      await prisma.users.updateMany({
+        where: { id: { in: userIds } },
+        data: { created_by: null },
+      });
+    }
+
+    // Step 3: Break circular FK between cleaner_review and sla_escalations
+    await prisma.cleaner_review.updateMany({
+      where: { company_id: { in: targetIds } },
+      data: { escalation_id: null, parent_review_id: null },
+    });
+
+    // Step 4: Delete SLA logs & escalations
+    await prisma.sla_escalation_logs.deleteMany({
+      where: { escalation: { company_id: { in: targetIds } } },
+    });
+    await prisma.sla_escalations.deleteMany({
+      where: { company_id: { in: targetIds } },
+    });
+
+    // Step 5: Delete all leaf-level dependent records in parallel
     await Promise.all([
       prisma.cleaner_review.deleteMany({ where: { company_id: { in: targetIds } } }),
       prisma.user_review.deleteMany({ where: { company_id: { in: targetIds } } }),
+      prisma.user_review_qr.deleteMany({ where: { company_id: { in: targetIds } } }),
       prisma.hygiene_scores.deleteMany({ where: { company_id: { in: targetIds } } }),
       prisma.cleaner_assignments.deleteMany({ where: { company_id: { in: targetIds } } }),
+      prisma.facility_companies.deleteMany({ where: { company_id: { in: targetIds } } }),
+      prisma.usage_category.deleteMany({ where: { company_id: { in: targetIds } } }),
+      prisma.configurations.deleteMany({ where: { company_id: { in: targetIds } } }),
+      prisma.shifts.deleteMany({ where: { company_id: { in: targetIds } } }),
+      prisma.registered_users.deleteMany({ where: { company_id: { in: targetIds } } }),
       ...(userIds.length > 0
         ? [
-          prisma.activity_logs.deleteMany({ where: { user_id: { in: userIds } } }),
-          prisma.shift_assignments.deleteMany({ where: { user_id: { in: userIds } } }),
-          prisma.saved_locations.deleteMany({ where: { user_id: { in: userIds } } }),
-          prisma.sessions.deleteMany({ where: { user_id: { in: userIds } } }),
-          prisma.refresh_tokens.deleteMany({ where: { user_id: { in: userIds } } }),
-        ]
+            prisma.activity_logs.deleteMany({ where: { user_id: { in: userIds } } }),
+            prisma.shift_assignments.deleteMany({ where: { user_id: { in: userIds } } }),
+            prisma.saved_locations.deleteMany({ where: { user_id: { in: userIds } } }),
+            prisma.sessions.deleteMany({ where: { user_id: { in: userIds } } }),
+            prisma.refresh_tokens.deleteMany({ where: { user_id: { in: userIds } } }),
+            prisma.user_fcm_tokens.deleteMany({ where: { user_id: { in: userIds } } }),
+          ]
         : []),
     ]);
 
-    // Step 3: Delete ALL users (now safe — all dependents are gone)
+    // Step 6: Delete ALL users
     if (userIds.length > 0) {
       await prisma.users.deleteMany({ where: { id: { in: userIds } } });
     }
 
-    // Step 4: Nullify location FKs, then delete locations
+    // Step 7: Nullify location FKs, then delete locations
     await prisma.locations.updateMany({
       where: { company_id: { in: targetIds } },
       data: { parent_id: null, type_id: null },
     });
     await prisma.locations.deleteMany({ where: { company_id: { in: targetIds } } });
 
-    // Step 5: Nullify location_type parent FKs, then delete location types
+    // Step 8: Nullify location_type parent FKs, then delete location types
     await prisma.location_types.updateMany({
       where: { company_id: { in: targetIds } },
       data: { parent_id: null },
     });
     await prisma.location_types.deleteMany({ where: { company_id: { in: targetIds } } });
 
-    // Step 6: Delete System Limits
+    // Step 9: Delete System Limits
     await prisma.system_limits.deleteMany({ where: { company_id: { in: targetIds } } });
 
-    // Step 7: Finally Delete Company
+    // Step 10: Finally Delete Company
     await prisma.companies.delete({ where: { id: companyId } });
 
-    res.status(200).json({ success: true, message: "Company deleted successfully." });
+    return res.status(200).json({
+      success: true,
+      mode: "hard",
+      message: "Company and all associated data permanently deleted.",
+    });
   } catch (error) {
     console.error("Error deleting company:", error);
     if (error.code === "P2025") {
       return res.status(404).json({ message: "Company not found" });
     }
-    res.status(500).json({ message: "Failed to delete company" });
+    res.status(500).json({ message: "Failed to delete company", error: error.message });
   }
 };
 
