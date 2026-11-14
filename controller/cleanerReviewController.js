@@ -1949,7 +1949,6 @@ export async function getSlaCleanerActivities(req, res) {
             company_id: true,
             sla_config: true,
             location_types: { select: { id: true, name: true } },
-            locations: { select: { id: true, name: true } },
           },
         },
         company: {
@@ -2429,7 +2428,6 @@ export async function getSlaCleanerActivityById(req, res) {
             metadata: true,
             sla_config: true,
             location_types: { select: { id: true, name: true } },
-            locations: { select: { id: true, name: true } },
           },
         },
         company: {
