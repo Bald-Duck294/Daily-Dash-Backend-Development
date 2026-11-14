@@ -35,3 +35,4 @@ router.delete("/rules/:ruleId", deleteRuleHandler);
 router.post("/rules/preview", previewRuleHandler);
 
 export default router;
+

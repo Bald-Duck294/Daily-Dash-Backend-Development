@@ -104,6 +104,18 @@ export const createRuleBook = async ({
 
   const nextVersion = lastBook ? lastBook.version + 1 : 1;
 
+  // Check if created_by user exists in users table
+  let creatorId = null;
+  if (created_by) {
+    const creatorUser = await prisma.users.findUnique({
+      where: { id: BigInt(created_by) },
+      select: { id: true }
+    });
+    if (creatorUser) {
+      creatorId = creatorUser.id;
+    }
+  }
+
   const ruleBook = await prisma.sla_rule_books.create({
     data: {
       company_id: companyIdBigInt,
@@ -121,7 +133,7 @@ export const createRuleBook = async ({
           { tier: 3, role: "COMPANY_ADMIN", max_limit: null }
         ]
       },
-      created_by: created_by ? BigInt(created_by) : null
+      created_by: creatorId
     }
   });
 
@@ -283,6 +295,18 @@ export const publishRuleBook = async (id, company_id, approved_by = null) => {
       }
     });
 
+    // Validate approved_by user if provided
+    let approverId = null;
+    if (approved_by) {
+      const approverUser = await tx.users.findUnique({
+        where: { id: BigInt(approved_by) },
+        select: { id: true }
+      });
+      if (approverUser) {
+        approverId = approverUser.id;
+      }
+    }
+
     // 2. Mark this candidate as PUBLISHED
     const published = await tx.sla_rule_books.update({
       where: { id: ruleBookId },
@@ -290,7 +314,7 @@ export const publishRuleBook = async (id, company_id, approved_by = null) => {
         status: "PUBLISHED",
         effective_from: now,
         effective_to: null,
-        approved_by: approved_by ? BigInt(approved_by) : null
+        approved_by: approverId
       },
       include: {
         rules: true
@@ -558,3 +582,4 @@ export const previewRuleSimulation = async (company_id, ruleDefinition, sampleRe
     results
   };
 };
+
