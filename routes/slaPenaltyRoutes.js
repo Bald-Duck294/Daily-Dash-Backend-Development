@@ -13,6 +13,17 @@ import {
   seedDefaultRuleBookHandler,
   previewRuleHandler
 } from "../controller/slaRuleBookController.js";
+import {
+  getPenaltiesHandler,
+  getPenaltySummaryHandler,
+  getPenaltyByIdHandler,
+  approvePenaltyHandler,
+  rejectPenaltyHandler,
+  disputePenaltyHandler,
+  reversePenaltyHandler,
+  getViolationsHandler,
+  evaluateReviewHandler
+} from "../controller/penaltyLedgerController.js";
 
 const router = express.Router();
 
@@ -33,6 +44,17 @@ router.post("/rule-books/:id/rules", addRuleHandler);
 router.put("/rules/:ruleId", updateRuleHandler);
 router.delete("/rules/:ruleId", deleteRuleHandler);
 router.post("/rules/preview", previewRuleHandler);
+
+// Penalty Ledger & Violations (Phase 2)
+router.get("/penalties", getPenaltiesHandler);
+router.get("/penalties/summary", getPenaltySummaryHandler);
+router.get("/penalties/:id", getPenaltyByIdHandler);
+router.post("/penalties/:id/approve", approvePenaltyHandler);
+router.post("/penalties/:id/reject", rejectPenaltyHandler);
+router.post("/penalties/:id/dispute", disputePenaltyHandler);
+router.post("/penalties/:id/reverse", reversePenaltyHandler);
+router.get("/violations", getViolationsHandler);
+router.post("/evaluate/:reviewId", evaluateReviewHandler);
 
 export default router;
 

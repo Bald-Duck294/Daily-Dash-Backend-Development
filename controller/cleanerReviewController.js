@@ -7,6 +7,7 @@ import RBACFilterService from "../utils/rbacFilterService.js";
 import { checkAndTriggerWashroomSlaBreach } from "../services/slaNotificationService.js";
 import { evaluateReviewSla } from "../services/slaEscalationService.js";
 import { resolveEffectiveWashroomSLA } from "../services/slaConfigurationService.js";
+import { evaluateReviewForSlaPenalty } from "../services/slaPenaltyEvaluationService.js";
 
 // =========================================================
 // 1️⃣ GET all cleaner reviews (with filters)
@@ -1010,6 +1011,14 @@ async function processHygieneScoring(review, afterPhotos) {
           err,
         ),
       );
+
+      // Evaluate SLA Penalties & Violations (Phase 2)
+      evaluateReviewForSlaPenalty(reviewData.id).catch((err) =>
+        console.error(
+          "Error triggering SLA penalty evaluation in processHygieneScoring:",
+          err,
+        ),
+      );
     } catch (updateError) {
       console.log("\n❌ FAILED TO UPDATE CLEANER REVIEW");
       console.log("========================================");
@@ -1441,6 +1450,13 @@ export async function updateCleanerReviewScore(req, res) {
           err,
         ),
       );
+
+      evaluateReviewForSlaPenalty(updatedReview.id).catch((err) =>
+        console.error(
+          "Error triggering SLA penalty evaluation in updateCleanerReviewScore:",
+          err,
+        ),
+      );
     }
 
     const safeSerialize = (obj) => {
@@ -1841,6 +1857,13 @@ export async function updateManagementScore(req, res) {
     }).catch((err) =>
       console.error(
         "Error triggering SLA evaluation in updateSupervisorScore:",
+        err,
+      ),
+    );
+
+    evaluateReviewForSlaPenalty(review.id).catch((err) =>
+      console.error(
+        "Error triggering SLA penalty evaluation in updateSupervisorScore:",
         err,
       ),
     );
