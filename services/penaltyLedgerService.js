@@ -437,3 +437,4 @@ export const getViolations = async (company_id, { cleaner_id, location_id, page 
     totalPages: Math.ceil(total / take)
   };
 };
+

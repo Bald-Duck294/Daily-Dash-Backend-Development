@@ -49,6 +49,20 @@ export const evaluateReviewForSlaPenalty = async (reviewId) => {
     const attemptNo = Number(review.attempt_no || 1);
     const reviewType = review.review_type || "ORIGINAL";
 
+    // 0. Verify if SLA Rules feature is enabled for this organization in configurations table
+    const slaRulesConfig = await prisma.configurations.findFirst({
+      where: {
+        name: "sla_rules",
+        company_id: companyId,
+        is_active: true
+      }
+    });
+
+    if (!slaRulesConfig) {
+      // Feature flag is OFF for this company
+      return { evaluated: false, message: "SLA Rules module is not enabled for this organization" };
+    }
+
     // 1. Fetch active PUBLISHED rule book for this company
     const activeRuleBook = await prisma.sla_rule_books.findFirst({
       where: {
@@ -316,3 +330,4 @@ export const evaluateReviewForSlaPenalty = async (reviewId) => {
     throw err;
   }
 };
+

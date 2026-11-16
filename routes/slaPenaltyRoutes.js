@@ -24,11 +24,21 @@ import {
   getViolationsHandler,
   evaluateReviewHandler
 } from "../controller/penaltyLedgerController.js";
+import {
+  getAllCompaniesSlaRulesStatus,
+  getCompanySlaRulesStatus,
+  toggleCompanySlaRules
+} from "../controller/slaRulesConfigController.js";
 
 const router = express.Router();
 
 // Enforce authentication on all SLA penalty routes
 router.use(verifyToken);
+
+// Company SLA Rules Feature Toggle (Super Admin & Tenancy Check)
+router.get("/company-status", getAllCompaniesSlaRulesStatus);
+router.get("/company-status/:companyId", getCompanySlaRulesStatus);
+router.post("/toggle-status", toggleCompanySlaRules);
 
 // Rule Books management
 router.post("/rule-books", createRuleBookHandler);

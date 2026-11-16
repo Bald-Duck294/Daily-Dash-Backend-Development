@@ -714,7 +714,7 @@ export const getTodaysActivities = async (req, res) => {
 
     // Format activities
     const activities = [];
-
+    console.log(cleanerActivities, "activities");
     cleanerActivities.forEach((activity) => {
       const isCompleted =
         activity.status === "completed" &&
@@ -722,8 +722,11 @@ export const getTodaysActivities = async (req, res) => {
         activity.updated_at > activity.created_at;
 
       const attemptNo = activity.attempt_no || 1;
-      const isRetry = Boolean(attemptNo > 1 || activity.review_type === "corrective_retry");
-      const escalation = activity.escalation || activity.triggered_escalations?.[0] || null;
+      const isRetry = Boolean(
+        attemptNo > 1 || activity.review_type === "corrective_retry",
+      );
+      const escalation =
+        activity.escalation || activity.triggered_escalations?.[0] || null;
 
       const locSla =
         activity.location?.sla_config &&
@@ -748,7 +751,10 @@ export const getTodaysActivities = async (req, res) => {
           slaTag = `Retry #${attemptNo - 1}`;
         } else if (isBreached) {
           slaTag = "SLA Breached";
-        } else if (activity.score !== null && Number(activity.score) >= threshold) {
+        } else if (
+          activity.score !== null &&
+          Number(activity.score) >= threshold
+        ) {
           slaTag = "SLA Passed";
         }
       }
@@ -764,12 +770,17 @@ export const getTodaysActivities = async (req, res) => {
         timestamp: isCompleted ? activity.updated_at : activity.created_at,
         status: activity.status,
         score: activity.score,
-        activityType: isCompleted ? (isBreached ? "warning" : "success") : "warning",
+        activityType: isCompleted
+          ? isBreached
+            ? "warning"
+            : "success"
+          : "warning",
         // SLA metadata
         is_sla_enabled: isWashroomSlaOn,
         attempt_no: attemptNo,
         is_retry: isRetry,
-        review_type: activity.review_type || (isRetry ? "corrective_retry" : "original"),
+        review_type:
+          activity.review_type || (isRetry ? "corrective_retry" : "original"),
         sla_state: escalation?.state || (isBreached ? "OPEN" : "NO_BREACH"),
         sla_tag: slaTag,
         is_breached: isBreached,
