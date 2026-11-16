@@ -1012,13 +1012,13 @@ async function processHygieneScoring(review, afterPhotos) {
         ),
       );
 
-      // Evaluate SLA Penalties & Violations (Phase 2)
-      evaluateReviewForSlaPenalty(reviewData.id).catch((err) =>
-        console.error(
-          "Error triggering SLA penalty evaluation in processHygieneScoring:",
-          err,
-        ),
-      );
+      // Real-time SLA penalty evaluation temporarily disabled (penalties generated via cron job)
+      // evaluateReviewForSlaPenalty(reviewData.id).catch((err) =>
+      //   console.error(
+      //     "Error triggering SLA penalty evaluation in processHygieneScoring:",
+      //     err,
+      //   ),
+      // );
     } catch (updateError) {
       console.log("\n❌ FAILED TO UPDATE CLEANER REVIEW");
       console.log("========================================");
@@ -1451,12 +1451,13 @@ export async function updateCleanerReviewScore(req, res) {
         ),
       );
 
-      evaluateReviewForSlaPenalty(updatedReview.id).catch((err) =>
-        console.error(
-          "Error triggering SLA penalty evaluation in updateCleanerReviewScore:",
-          err,
-        ),
-      );
+      // Real-time SLA penalty evaluation temporarily disabled (penalties generated via cron job)
+      // evaluateReviewForSlaPenalty(updatedReview.id).catch((err) =>
+      //   console.error(
+      //     "Error triggering SLA penalty evaluation in updateCleanerReviewScore:",
+      //     err,
+      //   ),
+      // );
     }
 
     const safeSerialize = (obj) => {
@@ -1861,12 +1862,13 @@ export async function updateManagementScore(req, res) {
       ),
     );
 
-    evaluateReviewForSlaPenalty(review.id).catch((err) =>
-      console.error(
-        "Error triggering SLA penalty evaluation in updateSupervisorScore:",
-        err,
-      ),
-    );
+    // Real-time SLA penalty evaluation temporarily disabled (penalties generated via cron job)
+    // evaluateReviewForSlaPenalty(review.id).catch((err) =>
+    //   console.error(
+    //     "Error triggering SLA penalty evaluation in updateSupervisorScore:",
+    //     err,
+    //   ),
+    // );
 
     // Serialization helper function from the controller
     const safeSerialize = (obj) => {

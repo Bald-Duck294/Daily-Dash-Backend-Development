@@ -639,7 +639,7 @@ export const getTodaysActivities = async (req, res) => {
     }
 
     if (roleFilter.id) {
-      userReviewWhere.toilet_id = roleFilter.id;
+      userReviewWhere.location_id = roleFilter.id;
     }
 
     // Check company SLA status
@@ -683,7 +683,13 @@ export const getTodaysActivities = async (req, res) => {
               name: true,
               rating: true,
               created_at: true,
-              toilet_id: true,
+              location_id: true,
+              locations: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
             },
             orderBy: { created_at: "desc" },
             take: 10,
@@ -691,15 +697,23 @@ export const getTodaysActivities = async (req, res) => {
         : Promise.resolve([]),
     ]);
 
-    const toiletIds = userReviews
-      .map((r) => r.toilet_id)
-      .filter((id) => id !== null);
-
     const locationMap = {};
-    if (toiletIds.length > 0) {
+    userReviews.forEach((r) => {
+      if (r.locations?.id && r.locations?.name) {
+        locationMap[r.locations.id.toString()] = r.locations.name;
+      }
+    });
+
+    const missingLocIds = userReviews
+      .map((r) => r.location_id)
+      .filter(
+        (id) => id !== null && id !== undefined && !locationMap[id.toString()],
+      );
+
+    if (missingLocIds.length > 0) {
       const locations = await prisma.locations.findMany({
         where: {
-          id: { in: toiletIds },
+          id: { in: missingLocIds },
         },
         select: {
           id: true,
@@ -714,7 +728,7 @@ export const getTodaysActivities = async (req, res) => {
 
     // Format activities
     const activities = [];
-    console.log(cleanerActivities, "activities");
+    // console.log(cleanerActivities, "activities");
     cleanerActivities.forEach((activity) => {
       const isCompleted =
         activity.status === "completed" &&
@@ -788,14 +802,19 @@ export const getTodaysActivities = async (req, res) => {
     });
 
     userReviews.forEach((review) => {
-      const locationName = review.toilet_id
-        ? locationMap[review.location_id.toString()] || "Unknown location"
-        : "Unknown location";
+      const locIdStr = review.location_id
+        ? review.location_id.toString()
+        : null;
+      const locationName =
+        review.locations?.name ||
+        (locIdStr ? locationMap[locIdStr] : null) ||
+        "Unknown location";
 
       activities.push({
         id: `user-${review.id}`,
         type: "user",
         text: `${review.name || "User"} submitted feedback for ${locationName}`,
+        locationName,
         timestamp: review.created_at,
         rating: review.rating,
         activityType:

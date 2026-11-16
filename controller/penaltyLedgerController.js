@@ -9,6 +9,7 @@ import {
   getViolations
 } from "../services/penaltyLedgerService.js";
 import { evaluateReviewForSlaPenalty } from "../services/slaPenaltyEvaluationService.js";
+import { processSlaPenaltyCronCycle } from "../workers/slaPenaltyWorker.js";
 import { serializeBigInt } from "./slaRuleBookController.js";
 
 const resolveCompanyId = (req) => {
@@ -228,6 +229,28 @@ export const evaluateReviewHandler = async (req, res) => {
     });
   } catch (error) {
     console.error("Error in evaluateReviewHandler:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const triggerPenaltyCronHandler = async (req, res) => {
+  try {
+    const company_id = resolveCompanyId(req);
+    const { lookbackHours = 72, limit = 100 } = req.body || {};
+
+    const result = await processSlaPenaltyCronCycle({
+      companyId: company_id,
+      lookbackHours: Number(lookbackHours),
+      limit: Number(limit)
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "SLA Penalty Cron cycle executed successfully",
+      data: serializeBigInt(result)
+    });
+  } catch (error) {
+    console.error("Error in triggerPenaltyCronHandler:", error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };

@@ -1,5 +1,6 @@
 import express from "express";
 import { processDueSlaEscalations } from "../workers/slaEscalationWorker.js";
+import { processSlaPenaltyCronCycle } from "../workers/slaPenaltyWorker.js";
 
 const router = express.Router();
 
@@ -64,5 +65,36 @@ async function handleSlaCronTrigger(req, res) {
 // Support both GET and POST for cron-job.org and webhook callers
 router.get("/trigger", verifyCronSecret, handleSlaCronTrigger);
 router.post("/trigger", verifyCronSecret, handleSlaCronTrigger);
+
+/**
+ * Handler function for executing the SLA penalty worker cycle.
+ */
+async function handlePenaltyCronTrigger(req, res) {
+  console.log("🌐 [SLA PENALTY CRON API] External trigger received");
+  try {
+    const startTime = Date.now();
+    const result = await processSlaPenaltyCronCycle({
+      companyId: req.query.company_id || req.body?.company_id || null
+    });
+    const durationMs = Date.now() - startTime;
+
+    return res.status(200).json({
+      success: true,
+      message: "SLA penalty cron cycle executed successfully.",
+      durationMs,
+      timestamp: new Date().toISOString(),
+      result,
+    });
+  } catch (error) {
+    console.error("❌ [SLA PENALTY CRON API ERROR]:", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || "Failed to execute SLA penalty cycle.",
+    });
+  }
+}
+
+router.get("/trigger-penalties", verifyCronSecret, handlePenaltyCronTrigger);
+router.post("/trigger-penalties", verifyCronSecret, handlePenaltyCronTrigger);
 
 export default router;

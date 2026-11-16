@@ -1,5 +1,33 @@
 import prisma from "../config/prismaClient.mjs";
 
+/**
+ * Helper to resolve all location IDs that a supervisor is assigned to,
+ * checking cleaner_assignments via cleaner_user_id (with role 3 or 7) or supervisor_id.
+ */
+export const getAuthorizedSupervisorLocationIds = async (userIdBigInt) => {
+  const assignments = await prisma.cleaner_assignments.findMany({
+    where: {
+      OR: [
+        {
+          cleaner_user_id: userIdBigInt,
+          OR: [
+            { role_id: { in: [3, 7] } },
+            { cleaner_user: { role_id: { in: [3, 7] } } }
+          ]
+        },
+        {
+          supervisor_id: userIdBigInt
+        }
+      ],
+      deleted_at: null,
+      location_id: { not: null }
+    },
+    select: { location_id: true }
+  });
+
+  return [...new Set(assignments.map((a) => a.location_id).filter(Boolean))];
+};
+
 export const getPenalties = async (company_id, {
   status,
   cleaner_id,
@@ -23,16 +51,7 @@ export const getPenalties = async (company_id, {
     const userIdBigInt = currentUser.id ? BigInt(currentUser.id) : null;
 
     if (userIdBigInt && (roleId === 3 || roleId === 7)) {
-      const supAssignments = await prisma.cleaner_assignments.findMany({
-        where: {
-          cleaner_user_id: userIdBigInt,
-          role_id: { in: [3, 7] },
-          deleted_at: null,
-          location_id: { not: null }
-        },
-        select: { location_id: true }
-      });
-      const locationIds = supAssignments.map((a) => a.location_id).filter(Boolean);
+      const locationIds = await getAuthorizedSupervisorLocationIds(userIdBigInt);
 
       where.OR = [
         { assigned_approver_id: userIdBigInt },
@@ -44,7 +63,12 @@ export const getPenalties = async (company_id, {
   }
 
   if (status && status !== "ALL") {
-    where.status = String(status).toUpperCase();
+    const s = String(status).toUpperCase();
+    if (s === "PENDING_APPROVAL" || s === "PENDING") {
+      where.status = { in: ["PENDING", "PENDING_APPROVAL"] };
+    } else {
+      where.status = s;
+    }
   }
   if (cleaner_id && cleaner_id !== "ALL") {
     where.cleaner_user_id = BigInt(cleaner_id);
@@ -101,6 +125,14 @@ export const getPenalties = async (company_id, {
         },
         approver_user: {
           select: { id: true, name: true, email: true }
+        },
+        logs: {
+          orderBy: { created_at: "asc" },
+          include: {
+            actor_user: {
+              select: { id: true, name: true, email: true }
+            }
+          }
         }
       }
     }),
@@ -108,7 +140,10 @@ export const getPenalties = async (company_id, {
   ]);
 
   return {
-    penalties,
+    penalties: penalties.map((p) => ({
+      ...p,
+      cleaner: p.cleaner_user
+    })),
     total,
     page: Number(page),
     limit: Number(limit),
@@ -129,16 +164,7 @@ export const getPenaltySummary = async (company_id, { start_date, end_date, clea
     const userIdBigInt = currentUser.id ? BigInt(currentUser.id) : null;
 
     if (userIdBigInt && (roleId === 3 || roleId === 7)) {
-      const supAssignments = await prisma.cleaner_assignments.findMany({
-        where: {
-          cleaner_user_id: userIdBigInt,
-          role_id: { in: [3, 7] },
-          deleted_at: null,
-          location_id: { not: null }
-        },
-        select: { location_id: true }
-      });
-      const locationIds = supAssignments.map((a) => a.location_id).filter(Boolean);
+      const locationIds = await getAuthorizedSupervisorLocationIds(userIdBigInt);
 
       where.OR = [
         { assigned_approver_id: userIdBigInt },
@@ -462,17 +488,7 @@ export const getViolations = async (company_id, { cleaner_id, location_id, page 
     const userIdBigInt = currentUser.id ? BigInt(currentUser.id) : null;
 
     if (userIdBigInt && (roleId === 3 || roleId === 7)) {
-      const supAssignments = await prisma.cleaner_assignments.findMany({
-        where: {
-          cleaner_user_id: userIdBigInt,
-          role_id: { in: [3, 7] },
-          deleted_at: null,
-          location_id: { not: null }
-        },
-        select: { location_id: true }
-      });
-      const locationIds = supAssignments.map((a) => a.location_id).filter(Boolean);
-
+      const locationIds = await getAuthorizedSupervisorLocationIds(userIdBigInt);
       where.location_id = { in: locationIds };
     } else if (userIdBigInt && roleId === 5) {
       where.cleaner_id = userIdBigInt;
@@ -511,7 +527,12 @@ export const getViolations = async (company_id, { cleaner_id, location_id, page 
   ]);
 
   return {
-    violations,
+    violations: violations.map((v) => ({
+      ...v,
+      cleaner: v.cleaner_user,
+      rule_code: v.rule?.rule_code,
+      status: v.evaluation_status
+    })),
     total,
     page: Number(page),
     limit: Number(limit),

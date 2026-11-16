@@ -22,7 +22,8 @@ import {
   disputePenaltyHandler,
   reversePenaltyHandler,
   getViolationsHandler,
-  evaluateReviewHandler
+  evaluateReviewHandler,
+  triggerPenaltyCronHandler
 } from "../controller/penaltyLedgerController.js";
 import {
   getAllCompaniesSlaRulesStatus,
@@ -65,6 +66,7 @@ router.post("/penalties/:id/dispute", disputePenaltyHandler);
 router.post("/penalties/:id/reverse", reversePenaltyHandler);
 router.get("/violations", getViolationsHandler);
 router.post("/evaluate/:reviewId", evaluateReviewHandler);
+router.post("/cron/trigger", triggerPenaltyCronHandler);
 
 export default router;
 
