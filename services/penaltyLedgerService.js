@@ -16,16 +16,27 @@ export const getPenalties = async (company_id, {
 
   // Role-based visibility scoping:
   // Admin (role_id 1 & 2): Full visibility of ALL company SLA activities
-  // Supervisor (role_id 3 & 7): Receives entries assigned to them as approver or supervised locations
+  // Supervisor (role_id 3 & 7): Receives entries for locations they supervise in cleaner_assignments or assigned as approver
   // Cleaner (role_id 5): Receives only their own penalty deductions
   if (currentUser) {
     const roleId = Number(currentUser.role_id);
     const userIdBigInt = currentUser.id ? BigInt(currentUser.id) : null;
 
     if (userIdBigInt && (roleId === 3 || roleId === 7)) {
+      const supAssignments = await prisma.cleaner_assignments.findMany({
+        where: {
+          cleaner_user_id: userIdBigInt,
+          role_id: { in: [3, 7] },
+          deleted_at: null,
+          location_id: { not: null }
+        },
+        select: { location_id: true }
+      });
+      const locationIds = supAssignments.map((a) => a.location_id).filter(Boolean);
+
       where.OR = [
         { assigned_approver_id: userIdBigInt },
-        { location: { cleaner_assignments: { some: { supervisor_id: userIdBigInt } } } }
+        { location_id: { in: locationIds } }
       ];
     } else if (userIdBigInt && roleId === 5) {
       where.cleaner_user_id = userIdBigInt;
@@ -105,18 +116,33 @@ export const getPenalties = async (company_id, {
   };
 };
 
-export const getPenaltySummary = async (company_id, { start_date, end_date, currentUser = null } = {}) => {
+export const getPenaltySummary = async (company_id, { start_date, end_date, cleaner_id, currentUser = null } = {}) => {
   const companyIdBigInt = BigInt(company_id);
   const where = { company_id: companyIdBigInt };
+
+  if (cleaner_id) {
+    where.cleaner_user_id = BigInt(cleaner_id);
+  }
 
   if (currentUser) {
     const roleId = Number(currentUser.role_id);
     const userIdBigInt = currentUser.id ? BigInt(currentUser.id) : null;
 
     if (userIdBigInt && (roleId === 3 || roleId === 7)) {
+      const supAssignments = await prisma.cleaner_assignments.findMany({
+        where: {
+          cleaner_user_id: userIdBigInt,
+          role_id: { in: [3, 7] },
+          deleted_at: null,
+          location_id: { not: null }
+        },
+        select: { location_id: true }
+      });
+      const locationIds = supAssignments.map((a) => a.location_id).filter(Boolean);
+
       where.OR = [
         { assigned_approver_id: userIdBigInt },
-        { location: { cleaner_assignments: { some: { supervisor_id: userIdBigInt } } } }
+        { location_id: { in: locationIds } }
       ];
     } else if (userIdBigInt && roleId === 5) {
       where.cleaner_user_id = userIdBigInt;
@@ -436,11 +462,20 @@ export const getViolations = async (company_id, { cleaner_id, location_id, page 
     const userIdBigInt = currentUser.id ? BigInt(currentUser.id) : null;
 
     if (userIdBigInt && (roleId === 3 || roleId === 7)) {
-      where.OR = [
-        { location: { cleaner_assignments: { some: { supervisor_id: userIdBigInt } } } }
-      ];
+      const supAssignments = await prisma.cleaner_assignments.findMany({
+        where: {
+          cleaner_user_id: userIdBigInt,
+          role_id: { in: [3, 7] },
+          deleted_at: null,
+          location_id: { not: null }
+        },
+        select: { location_id: true }
+      });
+      const locationIds = supAssignments.map((a) => a.location_id).filter(Boolean);
+
+      where.location_id = { in: locationIds };
     } else if (userIdBigInt && roleId === 5) {
-      where.cleaner_user_id = userIdBigInt;
+      where.cleaner_id = userIdBigInt;
     }
   }
 

@@ -88,14 +88,15 @@ export const evaluateReviewForSlaPenalty = async (reviewId) => {
     }
 
     // 2. Handle Retry Auto-Waive Workflow (AUTO_WAIVE_ON_RETRY_PASS)
-    // If this is a retry attempt (attempt_no >= 2) and score is passing (>= 7.0)
-    if (attemptNo >= 2 && reviewScore >= 7.0) {
-      // Find prior violations on parent review or earlier attempts for this location today
+    // If cleaner submits another review or retry for this location scoring >= 7.0, resolve earlier breaches
+    if (reviewScore >= 7.0) {
+      // Find prior violations on earlier reviews for this location today that qualify for auto-waive
       const earlierViolations = await prisma.sla_violations.findMany({
         where: {
           company_id: companyId,
           cleaner_user_id: cleanerUserId,
           location_id: locationId,
+          review_id: { not: review.id },
           evaluation_status: { in: ["DETECTED", "QUALIFIED_FOR_PENALTY"] },
           rule: {
             retry_resolution_policy: "AUTO_WAIVE_ON_RETRY_PASS"
@@ -107,7 +108,7 @@ export const evaluateReviewForSlaPenalty = async (reviewId) => {
       });
 
       for (const viol of earlierViolations) {
-        // Mark violation as waived
+        // Mark violation as waived by passing re-cleaning
         await prisma.sla_violations.update({
           where: { id: viol.id },
           data: { evaluation_status: "WAIVED_BY_RETRY" }
@@ -115,12 +116,12 @@ export const evaluateReviewForSlaPenalty = async (reviewId) => {
 
         // Reverse associated pending penalties
         for (const pen of viol.penalties) {
-          if (["PENDING", "UNDER_REVIEW"].includes(pen.status)) {
+          if (["PENDING", "UNDER_REVIEW", "PENDING_APPROVAL"].includes(pen.status)) {
             await prisma.cleaner_penalties.update({
               where: { id: pen.id },
               data: {
                 status: "REVERSED",
-                reversal_reason: `Automatically waived by successful retry attempt #${attemptNo} scoring ${reviewScore.toFixed(1)}/10`
+                reversal_reason: `Automatically waived by subsequent passing review #${review.id} (Attempt ${attemptNo}) scoring ${reviewScore.toFixed(1)}/10`
               }
             });
 
@@ -133,7 +134,7 @@ export const evaluateReviewForSlaPenalty = async (reviewId) => {
                 new_status: "REVERSED",
                 previous_amount: pen.calculated_amount,
                 new_amount: 0,
-                comment: `Waived via passing corrective cleaning retry #${attemptNo}`
+                comment: `Waived via passing corrective cleaning review #${review.id} scoring ${reviewScore.toFixed(1)}/10`
               }
             });
           }
@@ -248,16 +249,20 @@ export const evaluateReviewForSlaPenalty = async (reviewId) => {
           }
         }
 
-        // Find assigned supervisor for this cleaner
-        const assignment = await prisma.cleaner_assignments.findFirst({
+        // Find assigned supervisor for this location using location in cleaner_assignments table
+        const supervisorAssignment = await prisma.cleaner_assignments.findFirst({
           where: {
-            cleaner_user_id: cleanerUserId,
-            location_id: locationId
+            location_id: locationId,
+            OR: [
+              { role_id: { in: [3, 7] } },
+              { cleaner_user: { role_id: { in: [3, 7] } } }
+            ],
+            deleted_at: null
           },
-          select: { supervisor_id: true }
+          select: { cleaner_user_id: true }
         });
 
-        const assignedApproverId = assignment?.supervisor_id || null;
+        const assignedApproverId = supervisorAssignment?.cleaner_user_id || null;
         const penaltyNumber = await generatePenaltyNumber();
 
         // 9. Write Financial Ledger Item in cleaner_penalties

@@ -43,7 +43,7 @@ export const dispatchSlaPenaltyBreachAlerts = async ({
     });
 
     // ========================================================
-    // 2. Resolve Assigned Supervisors for this location / cleaner
+    // 2. Resolve Assigned Supervisors for this location
     // ========================================================
     const supervisorIds = new Set();
     if (assignedApproverId) {
@@ -55,12 +55,15 @@ export const dispatchSlaPenaltyBreachAlerts = async ({
         where: {
           location_id: BigInt(location.id),
           deleted_at: null,
-          supervisor_id: { not: null }
+          OR: [
+            { role_id: { in: [3, 7] } },
+            { cleaner_user: { role_id: { in: [3, 7] } } }
+          ]
         },
-        select: { supervisor_id: true }
+        select: { cleaner_user_id: true }
       });
       locAssignments.forEach((a) => {
-        if (a.supervisor_id) supervisorIds.add(a.supervisor_id);
+        if (a.cleaner_user_id) supervisorIds.add(a.cleaner_user_id);
       });
     }
 
@@ -248,3 +251,4 @@ export const dispatchSlaPenaltyBreachAlerts = async ({
     console.error("Error in dispatchSlaPenaltyBreachAlerts:", error);
   }
 };
+

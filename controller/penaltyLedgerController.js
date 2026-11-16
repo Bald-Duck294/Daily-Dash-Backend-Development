@@ -58,10 +58,11 @@ export const getPenaltySummaryHandler = async (req, res) => {
       return res.status(400).json({ success: false, message: "company_id is required" });
     }
 
-    const { start_date, end_date } = req.query;
+    const { start_date, end_date, cleaner_id } = req.query;
     const summary = await getPenaltySummary(company_id, {
       start_date,
       end_date,
+      cleaner_id,
       currentUser: req.user
     });
 
