@@ -789,7 +789,7 @@ export const getTodaysActivities = async (req, res) => {
 
     userReviews.forEach((review) => {
       const locationName = review.toilet_id
-        ? locationMap[review.toilet_id.toString()] || "Unknown location"
+        ? locationMap[review.location_id.toString()] || "Unknown location"
         : "Unknown location";
 
       activities.push({

@@ -31,7 +31,8 @@ export const getPenaltiesHandler = async (req, res) => {
       start_date,
       end_date,
       page,
-      limit
+      limit,
+      currentUser: req.user
     });
 
     return res.status(200).json({
@@ -58,7 +59,11 @@ export const getPenaltySummaryHandler = async (req, res) => {
     }
 
     const { start_date, end_date } = req.query;
-    const summary = await getPenaltySummary(company_id, { start_date, end_date });
+    const summary = await getPenaltySummary(company_id, {
+      start_date,
+      end_date,
+      currentUser: req.user
+    });
 
     return res.status(200).json({
       success: true,
@@ -186,7 +191,13 @@ export const getViolationsHandler = async (req, res) => {
     }
 
     const { cleaner_id, location_id, page = 1, limit = 20 } = req.query;
-    const result = await getViolations(company_id, { cleaner_id, location_id, page, limit });
+    const result = await getViolations(company_id, {
+      cleaner_id,
+      location_id,
+      page,
+      limit,
+      currentUser: req.user
+    });
 
     return res.status(200).json({
       success: true,

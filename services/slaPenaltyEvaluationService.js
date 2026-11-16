@@ -1,6 +1,7 @@
 import prisma from "../config/prismaClient.mjs";
 import { evaluateConditionAst } from "./slaRuleConditionValidator.js";
 import { calculatePenalty } from "./penaltyCalculationEngine.js";
+import { dispatchSlaPenaltyBreachAlerts } from "./slaPenaltyNotificationService.js";
 
 /**
  * Generate human-readable unique penalty number (e.g. PEN-202611-00123)
@@ -305,6 +306,19 @@ export const evaluateReviewForSlaPenalty = async (reviewId) => {
         });
 
         createdPenalties.push(penalty);
+
+        // 11. Dispatch notifications & activity logs to respective roles (Admin, Supervisor, Cleaner)
+        dispatchSlaPenaltyBreachAlerts({
+          penalty,
+          rule,
+          violation,
+          review,
+          cleanerUser: review.cleaner_user,
+          location: review.location,
+          companyId
+        }).catch((alertErr) =>
+          console.error("Error dispatching SLA penalty breach alerts:", alertErr)
+        );
       }
     }
 

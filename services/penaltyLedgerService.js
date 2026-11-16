@@ -8,10 +8,29 @@ export const getPenalties = async (company_id, {
   start_date,
   end_date,
   page = 1,
-  limit = 20
+  limit = 20,
+  currentUser = null
 } = {}) => {
   const companyIdBigInt = BigInt(company_id);
   const where = { company_id: companyIdBigInt };
+
+  // Role-based visibility scoping:
+  // Admin (role_id 1 & 2): Full visibility of ALL company SLA activities
+  // Supervisor (role_id 3 & 7): Receives entries assigned to them as approver or supervised locations
+  // Cleaner (role_id 5): Receives only their own penalty deductions
+  if (currentUser) {
+    const roleId = Number(currentUser.role_id);
+    const userIdBigInt = currentUser.id ? BigInt(currentUser.id) : null;
+
+    if (userIdBigInt && (roleId === 3 || roleId === 7)) {
+      where.OR = [
+        { assigned_approver_id: userIdBigInt },
+        { location: { cleaner_assignments: { some: { supervisor_id: userIdBigInt } } } }
+      ];
+    } else if (userIdBigInt && roleId === 5) {
+      where.cleaner_user_id = userIdBigInt;
+    }
+  }
 
   if (status && status !== "ALL") {
     where.status = String(status).toUpperCase();
@@ -86,9 +105,23 @@ export const getPenalties = async (company_id, {
   };
 };
 
-export const getPenaltySummary = async (company_id, { start_date, end_date } = {}) => {
+export const getPenaltySummary = async (company_id, { start_date, end_date, currentUser = null } = {}) => {
   const companyIdBigInt = BigInt(company_id);
   const where = { company_id: companyIdBigInt };
+
+  if (currentUser) {
+    const roleId = Number(currentUser.role_id);
+    const userIdBigInt = currentUser.id ? BigInt(currentUser.id) : null;
+
+    if (userIdBigInt && (roleId === 3 || roleId === 7)) {
+      where.OR = [
+        { assigned_approver_id: userIdBigInt },
+        { location: { cleaner_assignments: { some: { supervisor_id: userIdBigInt } } } }
+      ];
+    } else if (userIdBigInt && roleId === 5) {
+      where.cleaner_user_id = userIdBigInt;
+    }
+  }
 
   if (start_date || end_date) {
     where.business_date = {};
@@ -394,9 +427,22 @@ export const reversePenalty = async (id, company_id, actorUser, { reversal_reaso
   return updated;
 };
 
-export const getViolations = async (company_id, { cleaner_id, location_id, page = 1, limit = 20 } = {}) => {
+export const getViolations = async (company_id, { cleaner_id, location_id, page = 1, limit = 20, currentUser = null } = {}) => {
   const companyIdBigInt = BigInt(company_id);
   const where = { company_id: companyIdBigInt };
+
+  if (currentUser) {
+    const roleId = Number(currentUser.role_id);
+    const userIdBigInt = currentUser.id ? BigInt(currentUser.id) : null;
+
+    if (userIdBigInt && (roleId === 3 || roleId === 7)) {
+      where.OR = [
+        { location: { cleaner_assignments: { some: { supervisor_id: userIdBigInt } } } }
+      ];
+    } else if (userIdBigInt && roleId === 5) {
+      where.cleaner_user_id = userIdBigInt;
+    }
+  }
 
   if (cleaner_id && cleaner_id !== "ALL") {
     where.cleaner_user_id = BigInt(cleaner_id);
