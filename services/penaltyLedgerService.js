@@ -1,4 +1,8 @@
 import prisma from "../config/prismaClient.mjs";
+import {
+  dispatchSlaDisputeRaisedAlerts,
+  dispatchSlaDisputeResolvedAlerts
+} from "./slaPenaltyNotificationService.js";
 
 /**
  * Helper to resolve all location IDs that a supervisor is assigned to,
@@ -296,7 +300,12 @@ export const approvePenalty = async (id, company_id, actorUser, { approved_amoun
   const companyIdBigInt = BigInt(company_id);
 
   const penalty = await prisma.cleaner_penalties.findFirst({
-    where: { id: penaltyId, company_id: companyIdBigInt }
+    where: { id: penaltyId, company_id: companyIdBigInt },
+    include: {
+      cleaner_user: true,
+      assigned_approver: true,
+      location: true
+    }
   });
 
   if (!penalty) {
@@ -307,6 +316,7 @@ export const approvePenalty = async (id, company_id, actorUser, { approved_amoun
     throw new Error(`Cannot approve penalty with status "${penalty.status}"`);
   }
 
+  const wasDisputed = penalty.status === "DISPUTED";
   const finalAmount = approved_amount !== undefined && approved_amount !== null
     ? Number(approved_amount)
     : Number(penalty.calculated_amount);
@@ -339,6 +349,19 @@ export const approvePenalty = async (id, company_id, actorUser, { approved_amoun
     return p;
   });
 
+  // If resolving a dispute, dispatch dispute resolution notification
+  if (wasDisputed) {
+    dispatchSlaDisputeResolvedAlerts({
+      penalty: updated,
+      cleanerUser: penalty.cleaner_user,
+      actorUser,
+      resolution: "UPHELD",
+      approvedAmount: finalAmount,
+      reason: comment,
+      companyId: company_id
+    }).catch((e) => console.error("Error dispatching dispute resolved alert:", e));
+  }
+
   return updated;
 };
 
@@ -347,7 +370,12 @@ export const rejectPenalty = async (id, company_id, actorUser, { rejection_reaso
   const companyIdBigInt = BigInt(company_id);
 
   const penalty = await prisma.cleaner_penalties.findFirst({
-    where: { id: penaltyId, company_id: companyIdBigInt }
+    where: { id: penaltyId, company_id: companyIdBigInt },
+    include: {
+      cleaner_user: true,
+      assigned_approver: true,
+      location: true
+    }
   });
 
   if (!penalty) {
@@ -358,6 +386,7 @@ export const rejectPenalty = async (id, company_id, actorUser, { rejection_reaso
     throw new Error(`Cannot reject penalty with status "${penalty.status}"`);
   }
 
+  const wasDisputed = penalty.status === "DISPUTED";
   const reason = rejection_reason || "Rejected by supervisor inspection";
 
   const updated = await prisma.$transaction(async (tx) => {
@@ -388,6 +417,19 @@ export const rejectPenalty = async (id, company_id, actorUser, { rejection_reaso
     return p;
   });
 
+  // If resolving a dispute, dispatch dispute resolution notification
+  if (wasDisputed) {
+    dispatchSlaDisputeResolvedAlerts({
+      penalty: updated,
+      cleanerUser: penalty.cleaner_user,
+      actorUser,
+      resolution: "WAIVED",
+      approvedAmount: 0,
+      reason,
+      companyId: company_id
+    }).catch((e) => console.error("Error dispatching dispute resolved alert:", e));
+  }
+
   return updated;
 };
 
@@ -396,7 +438,12 @@ export const disputePenalty = async (id, company_id, actorUser, { dispute_reason
   const companyIdBigInt = BigInt(company_id);
 
   const penalty = await prisma.cleaner_penalties.findFirst({
-    where: { id: penaltyId, company_id: companyIdBigInt }
+    where: { id: penaltyId, company_id: companyIdBigInt },
+    include: {
+      cleaner_user: true,
+      assigned_approver: true,
+      location: true
+    }
   });
 
   if (!penalty) {
@@ -431,6 +478,14 @@ export const disputePenalty = async (id, company_id, actorUser, { dispute_reason
 
     return p;
   });
+
+  // Dispatch dispute raised alert to supervisors & admins
+  dispatchSlaDisputeRaisedAlerts({
+    penalty: updated,
+    cleanerUser: penalty.cleaner_user,
+    disputeReason: reason,
+    companyId: company_id
+  }).catch((e) => console.error("Error dispatching dispute raised alert:", e));
 
   return updated;
 };

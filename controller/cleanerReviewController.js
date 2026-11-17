@@ -1012,13 +1012,13 @@ async function processHygieneScoring(review, afterPhotos) {
         ),
       );
 
-      // Real-time SLA penalty evaluation temporarily disabled (penalties generated via cron job)
-      // evaluateReviewForSlaPenalty(reviewData.id).catch((err) =>
-      //   console.error(
-      //     "Error triggering SLA penalty evaluation in processHygieneScoring:",
-      //     err,
-      //   ),
-      // );
+      // Real-time SLA penalty evaluation on review submission
+      evaluateReviewForSlaPenalty(reviewData.id).catch((err) =>
+        console.error(
+          "Error triggering SLA penalty evaluation in processHygieneScoring:",
+          err,
+        ),
+      );
     } catch (updateError) {
       console.log("\n❌ FAILED TO UPDATE CLEANER REVIEW");
       console.log("========================================");
@@ -1451,13 +1451,13 @@ export async function updateCleanerReviewScore(req, res) {
         ),
       );
 
-      // Real-time SLA penalty evaluation temporarily disabled (penalties generated via cron job)
-      // evaluateReviewForSlaPenalty(updatedReview.id).catch((err) =>
-      //   console.error(
-      //     "Error triggering SLA penalty evaluation in updateCleanerReviewScore:",
-      //     err,
-      //   ),
-      // );
+      // Real-time SLA penalty evaluation on review update
+      evaluateReviewForSlaPenalty(updatedReview.id).catch((err) =>
+        console.error(
+          "Error triggering SLA penalty evaluation in updateCleanerReviewScore:",
+          err,
+        ),
+      );
     }
 
     const safeSerialize = (obj) => {
@@ -1862,13 +1862,13 @@ export async function updateManagementScore(req, res) {
       ),
     );
 
-    // Real-time SLA penalty evaluation temporarily disabled (penalties generated via cron job)
-    // evaluateReviewForSlaPenalty(review.id).catch((err) =>
-    //   console.error(
-    //     "Error triggering SLA penalty evaluation in updateSupervisorScore:",
-    //     err,
-    //   ),
-    // );
+    // Real-time SLA penalty evaluation on supervisor score update
+    evaluateReviewForSlaPenalty(review.id).catch((err) =>
+      console.error(
+        "Error triggering SLA penalty evaluation in updateSupervisorScore:",
+        err,
+      ),
+    );
 
     // Serialization helper function from the controller
     const safeSerialize = (obj) => {

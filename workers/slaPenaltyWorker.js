@@ -2,7 +2,10 @@ import "dotenv/config";
 import cron from "node-cron";
 import dotenv from "dotenv";
 import prisma from "../config/prismaClient.mjs";
-import { evaluateReviewForSlaPenalty } from "../services/slaPenaltyEvaluationService.js";
+import {
+  evaluateReviewForSlaPenalty,
+  evaluateDayWisePenaltiesForDate
+} from "../services/slaPenaltyEvaluationService.js";
 
 let isPenaltyProcessing = false;
 
@@ -139,6 +142,15 @@ export async function processSlaPenaltyCronCycle({ companyId = null, lookbackHou
       }
     }
 
+    // Also run Day-Wise evaluation cycle for the target company/companies
+    try {
+      const dailyStats = await evaluateDayWisePenaltiesForDate({ companyId });
+      stats.dailyPenaltiesCreated = dailyStats.penaltiesCreated || 0;
+      stats.penaltiesCreated += stats.dailyPenaltiesCreated;
+    } catch (dayErr) {
+      console.error("❌ [SLA PENALTY CRON] Error running day-wise evaluation:", dayErr.message);
+    }
+
     const durationMs = Date.now() - startTime;
     console.log(
       `✅ [SLA PENALTY CRON] Cycle finished in ${durationMs}ms | Companies: ${stats.companiesEvaluated} | Reviews: ${stats.reviewsScanned} | Penalties: ${stats.penaltiesCreated}`
@@ -164,20 +176,33 @@ export async function processSlaPenaltyCronCycle({ companyId = null, lookbackHou
 }
 
 /**
- * Initializes the node-cron scheduler for SLA penalties to run every 60 seconds (* * * * *).
+ * Initializes the node-cron scheduler for SLA penalties:
+ * 1. Runs review scans every 60 seconds (* * * * *) for TASK_WISE rules.
+ * 2. Runs end-of-day daily performance aggregation at 23:59 (59 23 * * *) for DAY_WISE rules.
  */
 export function startSlaPenaltyWorker() {
-  console.log("🚀 [SLA PENALTY WORKER] Penalty cron worker initialized (Schedule: every 60s)");
+  console.log("🚀 [SLA PENALTY WORKER] Penalty cron worker initialized (Task scan: every 60s | Day-Wise: daily at 23:59)");
 
-  const task = cron.schedule("* * * * *", async () => {
+  // 1. Task-wise review scanner
+  const taskScanJob = cron.schedule("* * * * *", async () => {
     try {
       await processSlaPenaltyCronCycle();
     } catch (error) {
-      console.error("❌ [SLA PENALTY WORKER] Uncaught error in cron iteration:", error);
+      console.error("❌ [SLA PENALTY WORKER] Uncaught error in task-wise cron iteration:", error);
     }
   });
 
-  return task;
+  // 2. End-of-Day daily evaluation job
+  const dailyJob = cron.schedule("59 23 * * *", async () => {
+    try {
+      console.log("🌙 [SLA PENALTY WORKER] Firing scheduled End-of-Day (23:59) penalty evaluation job...");
+      await evaluateDayWisePenaltiesForDate();
+    } catch (error) {
+      console.error("❌ [SLA PENALTY WORKER] Uncaught error in end-of-day cron iteration:", error);
+    }
+  });
+
+  return { taskScanJob, dailyJob };
 }
 
 /**

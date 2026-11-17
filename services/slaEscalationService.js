@@ -412,6 +412,25 @@ export const createSlaEscalation = async ({
             });
         }
 
+        // 4b. Dispatch Level 1 Notification to assigned Supervisor(s)
+        if (effectiveSla.configuration?.notify_supervisor !== false) {
+            await sendEscalationPushNotification({
+                locationId: review.location_id,
+                locationName,
+                companyId: review.company_id,
+                score,
+                threshold,
+                level: 1,
+                targetRole: "supervisor",
+                cleanerUserId: cleanerUserId,
+                escalationId: escalation.id,
+                reviewId: review.id,
+                notificationType: "sla_breach_level_1",
+                title: `Cleaning Alert - ${locationName}`,
+                body: `${cleanerName} completed cleaning at ${locationName} with score ${score.toFixed(1)}/10 (Below threshold ${threshold}). Action required.`
+            });
+        }
+
         console.log(`✅ [SLA ESCALATION CREATED] Record ID #${escalation.id} is now OPEN at Level 1.\n`);
         return escalation;
     } catch (error) {
