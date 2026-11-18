@@ -663,7 +663,13 @@ router.get("/user-review", async (req, res) => {
     const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
     const ISSUE_REASON_IDS = Array.from({ length: 50 }, (_, i) => i + 1);
 
-    const [totalLifetime, todayCount, avgResult, issuesCount] = await Promise.all([
+    // Period where clause for issues (respects location and date filters, excluding issues_only filter)
+    const periodWhere = { ...baseStatsWhere };
+    if (where.created_at) {
+      periodWhere.created_at = where.created_at;
+    }
+
+    const [totalLifetime, todayCount, avgResult, totalIssuesCount, todayIssuesCount, periodIssuesCount] = await Promise.all([
       prisma.user_review_qr.count({ where: baseStatsWhere }),
       prisma.user_review_qr.count({
         where: { ...baseStatsWhere, created_at: { gte: todayStart, lte: todayEnd } },
@@ -675,13 +681,29 @@ router.get("/user-review", async (req, res) => {
       prisma.user_review_qr.count({
         where: { ...baseStatsWhere, reason_ids: { hasSome: ISSUE_REASON_IDS } },
       }),
+      prisma.user_review_qr.count({
+        where: {
+          ...baseStatsWhere,
+          created_at: { gte: todayStart, lte: todayEnd },
+          reason_ids: { hasSome: ISSUE_REASON_IDS }
+        },
+      }),
+      prisma.user_review_qr.count({
+        where: {
+          ...periodWhere,
+          reason_ids: { hasSome: ISSUE_REASON_IDS }
+        },
+      }),
     ]);
 
     const stats = {
       total: totalLifetime,
       today: todayCount,
       avgRating: avgResult._avg?.rating ? Number(avgResult._avg.rating.toFixed(1)) : 0,
-      issuesCount: issuesCount,
+      issuesCount: periodIssuesCount,
+      totalIssuesCount: totalIssuesCount,
+      todayIssuesCount: todayIssuesCount,
+      periodIssuesCount: periodIssuesCount,
     };
 
     console.log(`Fetched ${reviews.length} reviews for page ${pageNum} (total: ${totalCount})`);
