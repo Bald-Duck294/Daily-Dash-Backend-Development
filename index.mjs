@@ -37,7 +37,6 @@ import slaPenaltyRoutes from "./routes/slaPenaltyRoutes.js";
 import userReviewQrRoutes from "./routes/userReviewQrRoutes.js";
 import slaLogsRoutes from "./routes/slaLogsRoutes.js";
 import slaCronRoutes from "./routes/slaCronRoutes.js";
-import notificationRoutes from "./routes/notificationRoutes.js";
 import { startSlaEscalationWorker } from "./workers/slaEscalationWorker.js";
 import { startSlaPenaltyWorker } from "./workers/slaPenaltyWorker.js";
 dotenv.config();
@@ -149,7 +148,6 @@ app.use("/api/sla-config", slaConfigRoutes);
 app.use("/api/sla-penalty", slaPenaltyRoutes);
 app.use("/api/sla-logs", slaLogsRoutes);
 app.use("/api/sla-cron", slaCronRoutes);
-app.use("/api/notifications", notificationRoutes);
 // app.use("/api", registered_users_router);
 
 app.use((err, req, res, next) => {
