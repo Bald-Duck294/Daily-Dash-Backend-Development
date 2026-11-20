@@ -23,7 +23,7 @@ export const getPenaltiesHandler = async (req, res) => {
       return res.status(400).json({ success: false, message: "company_id is required" });
     }
 
-    const { status, cleaner_id, location_id, scope, start_date, end_date, page = 1, limit = 20 } = req.query;
+    const { status, cleaner_id, location_id, scope, start_date, end_date, dispute_filter, page = 1, limit = 20 } = req.query;
     const result = await getPenalties(company_id, {
       status,
       cleaner_id,
@@ -31,6 +31,7 @@ export const getPenaltiesHandler = async (req, res) => {
       scope,
       start_date,
       end_date,
+      dispute_filter,
       page,
       limit,
       currentUser: req.user
@@ -59,11 +60,12 @@ export const getPenaltySummaryHandler = async (req, res) => {
       return res.status(400).json({ success: false, message: "company_id is required" });
     }
 
-    const { start_date, end_date, cleaner_id } = req.query;
+    const { start_date, end_date, cleaner_id, location_id } = req.query;
     const summary = await getPenaltySummary(company_id, {
       start_date,
       end_date,
       cleaner_id,
+      location_id,
       currentUser: req.user
     });
 
@@ -105,7 +107,8 @@ export const approvePenaltyHandler = async (req, res) => {
     }
 
     const { id } = req.params;
-    const { approved_amount, comment } = req.body;
+    const { approved_amount } = req.body;
+    const comment = req.body.comment || req.body.comments;
     const updated = await approvePenalty(id, company_id, req.user, { approved_amount, comment });
 
     return res.status(200).json({
@@ -127,7 +130,7 @@ export const rejectPenaltyHandler = async (req, res) => {
     }
 
     const { id } = req.params;
-    const { rejection_reason } = req.body;
+    const rejection_reason = req.body.rejection_reason || req.body.reason;
     const updated = await rejectPenalty(id, company_id, req.user, { rejection_reason });
 
     return res.status(200).json({
@@ -149,7 +152,7 @@ export const disputePenaltyHandler = async (req, res) => {
     }
 
     const { id } = req.params;
-    const { dispute_reason } = req.body;
+    const dispute_reason = req.body.dispute_reason || req.body.reason;
     const updated = await disputePenalty(id, company_id, req.user, { dispute_reason });
 
     return res.status(200).json({

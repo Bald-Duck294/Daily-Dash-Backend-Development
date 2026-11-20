@@ -3463,3 +3463,289 @@ export const getAvailableZones = async (req, res) => {
   }
 };
 
+/**
+ * Generates an aggregated summary of SLA penalties per cleaner.
+ * Complies with RBAC (Supervisors only see assigned locations, Admins see all).
+ */
+export const getCleanerPenaltySummaryReport = async (req, res) => {
+  try {
+    const {
+      company_id,
+      start_date,
+      end_date,
+      cleaner_id,
+      location_id,
+    } = req.query;
+
+    if (!company_id) {
+      return res.status(400).json({
+        status: "error",
+        message: "company_id is required",
+      });
+    }
+
+    const companyIdBigInt = BigInt(company_id);
+
+    // 1. Fetch company info
+    const company = await prisma.companies.findUnique({
+      where: { id: companyIdBigInt },
+      select: { id: true, name: true },
+    });
+
+    if (!company) {
+      return res.status(404).json({
+        status: "error",
+        message: "Company not found",
+      });
+    }
+
+    const user = req.user;
+    const isAdmin = user?.role_id === 1 || user?.role_id === 2;
+    const isSupervisor = user?.role_id === 3 || user?.role_id === 7;
+    const isCleaner = user?.role_id === 5;
+
+    // 2. RBAC Filtering
+    const whereClause = {
+      company_id: companyIdBigInt,
+    };
+
+    if (isSupervisor && user?.id) {
+      const authorizedLocationIds = await RBACFilterService.getAuthorizedLocationIds(
+        user.id,
+        company_id
+      );
+
+      if (!authorizedLocationIds || authorizedLocationIds.length === 0) {
+        return res.status(200).json({
+          status: "success",
+          data: [],
+          count: 0,
+          metadata: {
+            report_type: "Cleaner Penalty Summary Report",
+            generated_on: new Date().toISOString(),
+            organization: company.name,
+            user_role_id: user?.role_id,
+            date_range: {
+              start: start_date || "Beginning",
+              end: end_date || "Now",
+            },
+            total_cleaners: 0,
+            gross_amount: 0,
+            approved_amount: 0,
+            waived_amount: 0,
+            pending_amount: 0,
+            disputes_count: 0,
+          },
+        });
+      }
+
+      if (location_id && location_id !== "undefined" && location_id !== "all") {
+        const targetLocId = BigInt(location_id);
+        const hasAccess = authorizedLocationIds.some(
+          (authId) => BigInt(authId) === targetLocId
+        );
+        if (!hasAccess) {
+          return res.status(403).json({
+            status: "error",
+            message: "Unauthorized access to this washroom location",
+          });
+        }
+        whereClause.location_id = targetLocId;
+      } else {
+        whereClause.location_id = { in: authorizedLocationIds };
+      }
+    } else if (isCleaner && user?.id) {
+      whereClause.cleaner_user_id = BigInt(user.id);
+    } else {
+      // Admin role (1, 2)
+      if (location_id && location_id !== "undefined" && location_id !== "all") {
+        whereClause.location_id = BigInt(location_id);
+      }
+    }
+
+    if (cleaner_id && cleaner_id !== "undefined" && cleaner_id !== "all") {
+      whereClause.cleaner_user_id = BigInt(cleaner_id);
+    }
+
+    // 3. Date Filtering (supports both business_date and created_at range)
+    if (start_date || end_date) {
+      const dateConditions = {};
+      if (start_date) {
+        const start = new Date(start_date);
+        start.setUTCHours(0, 0, 0, 0);
+        dateConditions.gte = start;
+      }
+      if (end_date) {
+        const end = new Date(end_date);
+        end.setUTCHours(23, 59, 59, 999);
+        dateConditions.lte = end;
+      }
+
+      whereClause.OR = [
+        { business_date: dateConditions },
+        { created_at: dateConditions },
+      ];
+    }
+
+    // 4. Query Penalties
+    const penalties = await prisma.cleaner_penalties.findMany({
+      where: whereClause,
+      orderBy: { created_at: "desc" },
+      include: {
+        cleaner_user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            avatar_url: true,
+          },
+        },
+        location: {
+          select: {
+            id: true,
+            name: true,
+            address: true,
+            city: true,
+          },
+        },
+        rule: {
+          select: {
+            id: true,
+            rule_code: true,
+            name: true,
+            violation_category: true,
+          },
+        },
+        violation: {
+          select: {
+            id: true,
+            score: true,
+            threshold: true,
+          },
+        },
+      },
+    });
+
+    // 5. Aggregate Grouped by Cleaner
+    const cleanerMap = new Map();
+
+    let totalGrossAmount = 0;
+    let totalApprovedAmount = 0;
+    let totalWaivedAmount = 0;
+    let totalPendingAmount = 0;
+    let totalDisputesCount = 0;
+
+    for (const p of penalties) {
+      const cId = p.cleaner_user_id ? String(p.cleaner_user_id) : "unknown";
+      const calcAmount = Number(p.calculated_amount || 0);
+      const approvedAmount = Number(p.approved_amount || 0);
+
+      totalGrossAmount += calcAmount;
+
+      const isWaived = p.status === "REJECTED" || p.status === "REVERSED";
+      const isApproved = p.status === "APPROVED";
+      const isPending =
+        p.status === "PENDING" ||
+        p.status === "DISPUTED" ||
+        p.status === "UNDER_REVIEW" ||
+        p.status === "PENDING_APPROVAL";
+      const isDisputed = Boolean(p.disputed_at) || p.status === "DISPUTED";
+
+      if (isWaived) totalWaivedAmount += calcAmount;
+      if (isApproved) totalApprovedAmount += approvedAmount;
+      if (isPending) totalPendingAmount += calcAmount;
+      if (isDisputed) totalDisputesCount += 1;
+
+      if (!cleanerMap.has(cId)) {
+        cleanerMap.set(cId, {
+          cleaner_id: cId,
+          cleaner_name: p.cleaner_user?.name || `Cleaner #${cId}`,
+          cleaner_phone: p.cleaner_user?.phone || "-",
+          cleaner_email: p.cleaner_user?.email || "-",
+          cleaner_avatar: p.cleaner_user?.avatar_url || null,
+          locations_set: new Set(),
+          total_penalties: 0,
+          gross_amount: 0,
+          approved_amount: 0,
+          waived_amount: 0,
+          pending_amount: 0,
+          disputes_count: 0,
+          violations_list: [],
+        });
+      }
+
+      const cData = cleanerMap.get(cId);
+      cData.total_penalties += 1;
+      cData.gross_amount += calcAmount;
+      if (isWaived) cData.waived_amount += calcAmount;
+      if (isApproved) cData.approved_amount += approvedAmount;
+      if (isPending) cData.pending_amount += calcAmount;
+      if (isDisputed) cData.disputes_count += 1;
+
+      if (p.location?.name) {
+        cData.locations_set.add(p.location.name);
+      }
+
+      cData.violations_list.push({
+        penalty_id: String(p.id),
+        penalty_number: p.penalty_number,
+        date: p.business_date || p.created_at,
+        location_name: p.location?.name || "N/A",
+        rule_code: p.rule?.rule_code || "RULE",
+        rule_name: p.rule?.name || "SLA Breach",
+        score: p.violation?.score ? Number(p.violation.score) : null,
+        calculated_amount: calcAmount,
+        approved_amount: approvedAmount,
+        status: p.status,
+        dispute_reason: p.dispute_reason,
+        review_id: p.review_id ? String(p.review_id) : null,
+      });
+    }
+
+    const reportData = Array.from(cleanerMap.values()).map((c) => ({
+      ...c,
+      locations: Array.from(c.locations_set),
+      gross_amount: Number(c.gross_amount.toFixed(2)),
+      approved_amount: Number(c.approved_amount.toFixed(2)),
+      waived_amount: Number(c.waived_amount.toFixed(2)),
+      pending_amount: Number(c.pending_amount.toFixed(2)),
+    }));
+
+    // Sort by gross_amount descending (highest penalties first)
+    reportData.sort((a, b) => b.gross_amount - a.gross_amount);
+
+    const reportMetadata = {
+      report_type: "Cleaner Penalty Summary Report",
+      generated_on: new Date().toISOString(),
+      organization: company.name,
+      user_role_id: user?.role_id,
+      date_range: {
+        start: start_date || "Beginning",
+        end: end_date || "Now",
+      },
+      total_cleaners: reportData.length,
+      gross_amount: Number(totalGrossAmount.toFixed(2)),
+      approved_amount: Number(totalApprovedAmount.toFixed(2)),
+      waived_amount: Number(totalWaivedAmount.toFixed(2)),
+      pending_amount: Number(totalPendingAmount.toFixed(2)),
+      disputes_count: totalDisputesCount,
+    };
+
+    return res.status(200).json({
+      status: "success",
+      message: "Cleaner Penalty Summary report generated successfully",
+      metadata: serializeBigInt(reportMetadata),
+      data: serializeBigInt(reportData),
+      count: reportData.length,
+    });
+  } catch (error) {
+    console.error("Error generating cleaner penalty summary report:", error);
+    return res.status(500).json({
+      status: "error",
+      message: "Failed to generate cleaner penalty summary report",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+

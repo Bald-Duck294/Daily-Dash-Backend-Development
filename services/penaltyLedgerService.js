@@ -39,6 +39,7 @@ export const getPenalties = async (company_id, {
   scope,
   start_date,
   end_date,
+  dispute_filter,
   page = 1,
   limit = 20,
   currentUser = null
@@ -66,7 +67,26 @@ export const getPenalties = async (company_id, {
     }
   }
 
-  if (status && status !== "ALL") {
+  if (dispute_filter && dispute_filter !== "ALL_PENALTIES") {
+    const df = String(dispute_filter).toUpperCase();
+    if (df === "PENDING" || df === "DISPUTED") {
+      where.status = "DISPUTED";
+    } else if (df === "WAIVED") {
+      where.status = "REJECTED";
+      where.disputed_at = { not: null };
+    } else if (df === "UPHELD") {
+      where.status = "APPROVED";
+      where.disputed_at = { not: null };
+    } else if (df === "ALL") {
+      const disputeOr = [
+        { status: "DISPUTED" },
+        { dispute_reason: { not: null } },
+        { disputed_at: { not: null } }
+      ];
+      if (!where.AND) where.AND = [];
+      where.AND.push({ OR: disputeOr });
+    }
+  } else if (status && status !== "ALL") {
     const s = String(status).toUpperCase();
     if (s === "PENDING_APPROVAL" || s === "PENDING") {
       where.status = { in: ["PENDING", "PENDING_APPROVAL"] };
@@ -130,6 +150,21 @@ export const getPenalties = async (company_id, {
         approver_user: {
           select: { id: true, name: true, email: true }
         },
+        review: {
+          select: {
+            id: true,
+            score: true,
+            attempt_no: true,
+            review_type: true,
+            status: true,
+            initial_comment: true,
+            final_comment: true,
+            before_photo: true,
+            after_photo: true,
+            created_at: true,
+            location_id: true
+          }
+        },
         logs: {
           orderBy: { created_at: "asc" },
           include: {
@@ -143,24 +178,58 @@ export const getPenalties = async (company_id, {
     prisma.cleaner_penalties.count({ where })
   ]);
 
+  // Aggregate total pending deductions and counts per cleaner for this company
+  const pendingAggregates = await prisma.cleaner_penalties.groupBy({
+    by: ["cleaner_user_id"],
+    where: {
+      company_id: companyIdBigInt,
+      status: { in: ["PENDING", "DISPUTED", "UNDER_REVIEW", "PENDING_APPROVAL"] }
+    },
+    _sum: {
+      calculated_amount: true
+    },
+    _count: {
+      id: true
+    }
+  });
+
+  const cleanerPendingMap = {};
+  for (const item of pendingAggregates) {
+    if (item.cleaner_user_id) {
+      cleanerPendingMap[String(item.cleaner_user_id)] = {
+        pending_amount: Number(Number(item._sum?.calculated_amount || 0).toFixed(2)),
+        pending_count: item._count?.id || 0
+      };
+    }
+  }
+
   return {
-    penalties: penalties.map((p) => ({
-      ...p,
-      cleaner: p.cleaner_user
-    })),
+    penalties: penalties.map((p) => {
+      const pendingInfo = cleanerPendingMap[String(p.cleaner_user_id)] || { pending_amount: 0, pending_count: 0 };
+      return {
+        ...p,
+        cleaner: p.cleaner_user,
+        cleaner_pending_amount: pendingInfo.pending_amount,
+        cleaner_pending_count: pendingInfo.pending_count
+      };
+    }),
     total,
     page: Number(page),
     limit: Number(limit),
-    totalPages: Math.ceil(total / take)
+    totalPages: Math.ceil(total / take),
+    cleaners_pending: cleanerPendingMap
   };
 };
 
-export const getPenaltySummary = async (company_id, { start_date, end_date, cleaner_id, currentUser = null } = {}) => {
+export const getPenaltySummary = async (company_id, { start_date, end_date, cleaner_id, location_id, currentUser = null } = {}) => {
   const companyIdBigInt = BigInt(company_id);
   const where = { company_id: companyIdBigInt };
 
-  if (cleaner_id) {
+  if (cleaner_id && cleaner_id !== "ALL") {
     where.cleaner_user_id = BigInt(cleaner_id);
+  }
+  if (location_id && location_id !== "ALL") {
+    where.location_id = BigInt(location_id);
   }
 
   if (currentUser) {
@@ -188,9 +257,12 @@ export const getPenaltySummary = async (company_id, { start_date, end_date, clea
   const penalties = await prisma.cleaner_penalties.findMany({
     where,
     select: {
+      cleaner_user_id: true,
       status: true,
       calculated_amount: true,
-      approved_amount: true
+      approved_amount: true,
+      dispute_reason: true,
+      disputed_at: true
     }
   });
 
@@ -203,13 +275,27 @@ export const getPenaltySummary = async (company_id, { start_date, end_date, clea
     reversed_count: 0,
     total_calculated_amount: 0,
     total_approved_amount: 0,
-    pending_amount: 0
+    pending_amount: 0,
+    disputed_amount: 0,
+    dispute_waived_count: 0,
+    dispute_upheld_count: 0,
+    cleaners_pending: {}
   };
 
   for (const p of penalties) {
     const calc = Number(p.calculated_amount || 0);
     const apprv = Number(p.approved_amount || 0);
     summary.total_calculated_amount += calc;
+
+    const isPendingStatus = ["PENDING", "DISPUTED", "UNDER_REVIEW", "PENDING_APPROVAL"].includes(p.status);
+    if (isPendingStatus && p.cleaner_user_id) {
+      const cid = String(p.cleaner_user_id);
+      if (!summary.cleaners_pending[cid]) {
+        summary.cleaners_pending[cid] = { pending_amount: 0, pending_count: 0 };
+      }
+      summary.cleaners_pending[cid].pending_amount += calc;
+      summary.cleaners_pending[cid].pending_count += 1;
+    }
 
     switch (p.status) {
       case "PENDING":
@@ -220,13 +306,20 @@ export const getPenaltySummary = async (company_id, { start_date, end_date, clea
       case "APPROVED":
         summary.approved_count++;
         summary.total_approved_amount += apprv;
+        if (p.disputed_at) {
+          summary.dispute_upheld_count++;
+        }
         break;
       case "REJECTED":
         summary.rejected_count++;
+        if (p.disputed_at) {
+          summary.dispute_waived_count++;
+        }
         break;
       case "DISPUTED":
         summary.disputed_count++;
         summary.pending_amount += calc;
+        summary.disputed_amount += calc;
         break;
       case "REVERSED":
         summary.reversed_count++;
@@ -236,9 +329,16 @@ export const getPenaltySummary = async (company_id, { start_date, end_date, clea
     }
   }
 
+  // Format cleaner pending amounts
+  for (const cid in summary.cleaners_pending) {
+    summary.cleaners_pending[cid].pending_amount = Number(summary.cleaners_pending[cid].pending_amount.toFixed(2));
+  }
+
   summary.total_calculated_amount = Number(summary.total_calculated_amount.toFixed(2));
   summary.total_approved_amount = Number(summary.total_approved_amount.toFixed(2));
   summary.pending_amount = Number(summary.pending_amount.toFixed(2));
+  summary.disputed_amount = Number(summary.disputed_amount.toFixed(2));
+  summary.total_disputes_count = summary.disputed_count + summary.dispute_waived_count + summary.dispute_upheld_count;
 
   return summary;
 };
@@ -292,7 +392,28 @@ export const getPenaltyById = async (id, company_id) => {
     throw new Error(`Penalty #${id} not found for company #${company_id}`);
   }
 
-  return penalty;
+  // Also calculate cleaner total pending amount
+  let cleaner_pending_amount = 0;
+  let cleaner_pending_count = 0;
+  if (penalty.cleaner_user_id) {
+    const cleanerPending = await prisma.cleaner_penalties.aggregate({
+      where: {
+        company_id: BigInt(company_id),
+        cleaner_user_id: penalty.cleaner_user_id,
+        status: { in: ["PENDING", "DISPUTED", "UNDER_REVIEW", "PENDING_APPROVAL"] }
+      },
+      _sum: { calculated_amount: true },
+      _count: { id: true }
+    });
+    cleaner_pending_amount = Number(Number(cleanerPending._sum?.calculated_amount || 0).toFixed(2));
+    cleaner_pending_count = cleanerPending._count?.id || 0;
+  }
+
+  return {
+    ...penalty,
+    cleaner_pending_amount,
+    cleaner_pending_count
+  };
 };
 
 export const approvePenalty = async (id, company_id, actorUser, { approved_amount, comment } = {}) => {
