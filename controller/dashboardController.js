@@ -639,7 +639,7 @@ export const getTodaysActivities = async (req, res) => {
     }
 
     if (roleFilter.id) {
-      userReviewWhere.toilet_id = roleFilter.id;
+      userReviewWhere.location_id = roleFilter.id;
     }
 
     // Check company SLA status
@@ -683,7 +683,13 @@ export const getTodaysActivities = async (req, res) => {
               name: true,
               rating: true,
               created_at: true,
-              toilet_id: true,
+              location_id: true,
+              locations: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
             },
             orderBy: { created_at: "desc" },
             take: 10,
@@ -691,15 +697,23 @@ export const getTodaysActivities = async (req, res) => {
         : Promise.resolve([]),
     ]);
 
-    const toiletIds = userReviews
-      .map((r) => r.toilet_id)
-      .filter((id) => id !== null);
-
     const locationMap = {};
-    if (toiletIds.length > 0) {
+    userReviews.forEach((r) => {
+      if (r.locations?.id && r.locations?.name) {
+        locationMap[r.locations.id.toString()] = r.locations.name;
+      }
+    });
+
+    const missingLocIds = userReviews
+      .map((r) => r.location_id)
+      .filter(
+        (id) => id !== null && id !== undefined && !locationMap[id.toString()],
+      );
+
+    if (missingLocIds.length > 0) {
       const locations = await prisma.locations.findMany({
         where: {
-          id: { in: toiletIds },
+          id: { in: missingLocIds },
         },
         select: {
           id: true,
@@ -714,7 +728,7 @@ export const getTodaysActivities = async (req, res) => {
 
     // Format activities
     const activities = [];
-
+    // console.log(cleanerActivities, "activities");
     cleanerActivities.forEach((activity) => {
       const isCompleted =
         activity.status === "completed" &&
@@ -722,8 +736,11 @@ export const getTodaysActivities = async (req, res) => {
         activity.updated_at > activity.created_at;
 
       const attemptNo = activity.attempt_no || 1;
-      const isRetry = Boolean(attemptNo > 1 || activity.review_type === "corrective_retry");
-      const escalation = activity.escalation || activity.triggered_escalations?.[0] || null;
+      const isRetry = Boolean(
+        attemptNo > 1 || activity.review_type === "corrective_retry",
+      );
+      const escalation =
+        activity.escalation || activity.triggered_escalations?.[0] || null;
 
       const locSla =
         activity.location?.sla_config &&
@@ -748,7 +765,10 @@ export const getTodaysActivities = async (req, res) => {
           slaTag = `Retry #${attemptNo - 1}`;
         } else if (isBreached) {
           slaTag = "SLA Breached";
-        } else if (activity.score !== null && Number(activity.score) >= threshold) {
+        } else if (
+          activity.score !== null &&
+          Number(activity.score) >= threshold
+        ) {
           slaTag = "SLA Passed";
         }
       }
@@ -764,12 +784,17 @@ export const getTodaysActivities = async (req, res) => {
         timestamp: isCompleted ? activity.updated_at : activity.created_at,
         status: activity.status,
         score: activity.score,
-        activityType: isCompleted ? (isBreached ? "warning" : "success") : "warning",
+        activityType: isCompleted
+          ? isBreached
+            ? "warning"
+            : "success"
+          : "warning",
         // SLA metadata
         is_sla_enabled: isWashroomSlaOn,
         attempt_no: attemptNo,
         is_retry: isRetry,
-        review_type: activity.review_type || (isRetry ? "corrective_retry" : "original"),
+        review_type:
+          activity.review_type || (isRetry ? "corrective_retry" : "original"),
         sla_state: escalation?.state || (isBreached ? "OPEN" : "NO_BREACH"),
         sla_tag: slaTag,
         is_breached: isBreached,
@@ -777,14 +802,19 @@ export const getTodaysActivities = async (req, res) => {
     });
 
     userReviews.forEach((review) => {
-      const locationName = review.toilet_id
-        ? locationMap[review.toilet_id.toString()] || "Unknown location"
-        : "Unknown location";
+      const locIdStr = review.location_id
+        ? review.location_id.toString()
+        : null;
+      const locationName =
+        review.locations?.name ||
+        (locIdStr ? locationMap[locIdStr] : null) ||
+        "Unknown location";
 
       activities.push({
         id: `user-${review.id}`,
         type: "user",
         text: `${review.name || "User"} submitted feedback for ${locationName}`,
+        locationName,
         timestamp: review.created_at,
         rating: review.rating,
         activityType:

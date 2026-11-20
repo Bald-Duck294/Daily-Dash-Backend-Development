@@ -37,7 +37,9 @@ import slaPenaltyRoutes from "./routes/slaPenaltyRoutes.js";
 import userReviewQrRoutes from "./routes/userReviewQrRoutes.js";
 import slaLogsRoutes from "./routes/slaLogsRoutes.js";
 import slaCronRoutes from "./routes/slaCronRoutes.js";
+import reviewManagementRoutes from "./routes/reviewManagementRoutes.js";
 import { startSlaEscalationWorker } from "./workers/slaEscalationWorker.js";
+import { startSlaPenaltyWorker } from "./workers/slaPenaltyWorker.js";
 dotenv.config();
 
 // ✅ NAYA FIREBASE INITIALIZATION LOGIC (.env se read karega)
@@ -147,6 +149,7 @@ app.use("/api/sla-config", slaConfigRoutes);
 app.use("/api/sla-penalty", slaPenaltyRoutes);
 app.use("/api/sla-logs", slaLogsRoutes);
 app.use("/api/sla-cron", slaCronRoutes);
+app.use("/api/review-management", reviewManagementRoutes);
 // app.use("/api", registered_users_router);
 
 app.use((err, req, res, next) => {
@@ -215,12 +218,13 @@ app.listen(PORT, () => {
   console.log(
     `----------/////Server running on port ${PORT}\\\\\\\------------`,
   );
-  // Start background cron worker for SLA escalations (enabled only for local dev / testing)
+  // Start background cron worker for SLA escalations & penalties (enabled only for local dev / testing)
   if (process.env.ENABLE_INPROCESS_CRON === "true") {
-    console.log("⏰ [CRON] Starting in-process SLA escalation worker (ENABLE_INPROCESS_CRON=true)");
+    console.log("⏰ [CRON] Starting in-process SLA escalation & penalty workers (ENABLE_INPROCESS_CRON=true)");
     startSlaEscalationWorker();
+    startSlaPenaltyWorker();
   } else {
-    console.log("ℹ️ [CRON] In-process cron worker disabled (Render Cron / external scheduler mode)");
+    console.log("ℹ️ [CRON] In-process cron workers disabled (Render Cron / external scheduler mode)");
   }
 });
 

@@ -339,10 +339,6 @@ export const addRuleToBook = async (ruleBookId, company_id, ruleData) => {
     throw new Error(`Rule book #${ruleBookId} not found`);
   }
 
-  if (book.status !== 'DRAFT') {
-    throw new Error(`Cannot add rules to a ${book.status} rule book. Only DRAFT rule books can be modified.`);
-  }
-
   const validation = validateRuleItem(ruleData);
   if (!validation.isValid) {
     const error = new Error(`Rule validation failed: ${validation.errors.join('; ')}`);
@@ -402,10 +398,6 @@ export const updateRule = async (ruleId, company_id, updateData) => {
     throw new Error(`Rule #${ruleId} not found`);
   }
 
-  if (existing.rule_book.status !== 'DRAFT') {
-    throw new Error(`Cannot edit rule in a ${existing.rule_book.status} rule book.`);
-  }
-
   if (updateData.condition_config) {
     const condRes = validateRuleItem({ ...existing, ...updateData });
     if (!condRes.isValid) {
@@ -454,15 +446,26 @@ export const deleteRule = async (ruleId, company_id) => {
     throw new Error(`Rule #${ruleId} not found`);
   }
 
-  if (existing.rule_book.status !== 'DRAFT') {
-    throw new Error(`Cannot delete rule from a ${existing.rule_book.status} rule book.`);
-  }
-
-  await prisma.sla_penalty_rules.delete({
-    where: { id: ruleIdBigInt }
+  // Check if any penalties or violations are attached to this rule
+  const violationsCount = await prisma.sla_violations.count({
+    where: { rule_id: ruleIdBigInt }
   });
 
-  return { success: true, message: `Rule #${ruleId} deleted successfully` };
+  if (violationsCount > 0) {
+    // Soft-deactivate so existing financial ledger records remain intact,
+    // but the rule is immediately removed from active clauses and UI.
+    await prisma.sla_penalty_rules.update({
+      where: { id: ruleIdBigInt },
+      data: { is_active: false }
+    });
+    return { success: true, message: `Rule #${ruleId} removed from active clauses.` };
+  } else {
+    // No penalties reference this rule, safe to permanently delete from database
+    await prisma.sla_penalty_rules.delete({
+      where: { id: ruleIdBigInt }
+    });
+    return { success: true, message: `Rule #${ruleId} deleted successfully` };
+  }
 };
 
 export const seedDefaultRuleBook = async (company_id, created_by = null, autoPublish = false) => {

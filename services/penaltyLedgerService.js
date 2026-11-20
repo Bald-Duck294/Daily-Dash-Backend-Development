@@ -1,0 +1,718 @@
+import prisma from "../config/prismaClient.mjs";
+import {
+  dispatchSlaDisputeRaisedAlerts,
+  dispatchSlaDisputeResolvedAlerts
+} from "./slaPenaltyNotificationService.js";
+
+/**
+ * Helper to resolve all location IDs that a supervisor is assigned to,
+ * checking cleaner_assignments via cleaner_user_id (with role 3 or 7) or supervisor_id.
+ */
+export const getAuthorizedSupervisorLocationIds = async (userIdBigInt) => {
+  const assignments = await prisma.cleaner_assignments.findMany({
+    where: {
+      OR: [
+        {
+          cleaner_user_id: userIdBigInt,
+          OR: [
+            { role_id: { in: [3, 7] } },
+            { cleaner_user: { role_id: { in: [3, 7] } } }
+          ]
+        },
+        {
+          supervisor_id: userIdBigInt
+        }
+      ],
+      deleted_at: null,
+      location_id: { not: null }
+    },
+    select: { location_id: true }
+  });
+
+  return [...new Set(assignments.map((a) => a.location_id).filter(Boolean))];
+};
+
+export const getPenalties = async (company_id, {
+  status,
+  cleaner_id,
+  location_id,
+  scope,
+  start_date,
+  end_date,
+  dispute_filter,
+  page = 1,
+  limit = 20,
+  currentUser = null
+} = {}) => {
+  const companyIdBigInt = BigInt(company_id);
+  const where = { company_id: companyIdBigInt };
+
+  // Role-based visibility scoping:
+  // Admin (role_id 1 & 2): Full visibility of ALL company SLA activities
+  // Supervisor (role_id 3 & 7): Receives entries for locations they supervise in cleaner_assignments or assigned as approver
+  // Cleaner (role_id 5): Receives only their own penalty deductions
+  if (currentUser) {
+    const roleId = Number(currentUser.role_id);
+    const userIdBigInt = currentUser.id ? BigInt(currentUser.id) : null;
+
+    if (userIdBigInt && (roleId === 3 || roleId === 7)) {
+      const locationIds = await getAuthorizedSupervisorLocationIds(userIdBigInt);
+
+      where.OR = [
+        { assigned_approver_id: userIdBigInt },
+        { location_id: { in: locationIds } }
+      ];
+    } else if (userIdBigInt && roleId === 5) {
+      where.cleaner_user_id = userIdBigInt;
+    }
+  }
+
+  if (dispute_filter && dispute_filter !== "ALL_PENALTIES") {
+    const df = String(dispute_filter).toUpperCase();
+    if (df === "PENDING" || df === "DISPUTED") {
+      where.status = "DISPUTED";
+    } else if (df === "WAIVED") {
+      where.status = "REJECTED";
+      where.disputed_at = { not: null };
+    } else if (df === "UPHELD") {
+      where.status = "APPROVED";
+      where.disputed_at = { not: null };
+    } else if (df === "ALL") {
+      const disputeOr = [
+        { status: "DISPUTED" },
+        { dispute_reason: { not: null } },
+        { disputed_at: { not: null } }
+      ];
+      if (!where.AND) where.AND = [];
+      where.AND.push({ OR: disputeOr });
+    }
+  } else if (status && status !== "ALL") {
+    const s = String(status).toUpperCase();
+    if (s === "PENDING_APPROVAL" || s === "PENDING") {
+      where.status = { in: ["PENDING", "PENDING_APPROVAL"] };
+    } else {
+      where.status = s;
+    }
+  }
+  if (cleaner_id && cleaner_id !== "ALL") {
+    where.cleaner_user_id = BigInt(cleaner_id);
+  }
+  if (location_id && location_id !== "ALL") {
+    where.location_id = BigInt(location_id);
+  }
+  if (scope && scope !== "ALL") {
+    where.scope = String(scope).toUpperCase();
+  }
+  if (start_date || end_date) {
+    where.business_date = {};
+    if (start_date) where.business_date.gte = new Date(start_date);
+    if (end_date) where.business_date.lte = new Date(end_date);
+  }
+
+  const skip = (Number(page) - 1) * Number(limit);
+  const take = Number(limit);
+
+  const [penalties, total] = await Promise.all([
+    prisma.cleaner_penalties.findMany({
+      where,
+      skip,
+      take,
+      orderBy: { created_at: "desc" },
+      include: {
+        cleaner_user: {
+          select: { id: true, name: true, email: true, phone: true }
+        },
+        location: {
+          select: { id: true, name: true, address: true, city: true }
+        },
+        rule: {
+          select: {
+            id: true,
+            rule_code: true,
+            name: true,
+            violation_category: true,
+            scope: true,
+            calculation_method: true
+          }
+        },
+        violation: {
+          select: {
+            id: true,
+            score: true,
+            threshold: true,
+            evidence_references: true,
+            occurrence_time: true
+          }
+        },
+        assigned_approver: {
+          select: { id: true, name: true, email: true }
+        },
+        approver_user: {
+          select: { id: true, name: true, email: true }
+        },
+        review: {
+          select: {
+            id: true,
+            score: true,
+            attempt_no: true,
+            review_type: true,
+            status: true,
+            initial_comment: true,
+            final_comment: true,
+            before_photo: true,
+            after_photo: true,
+            created_at: true,
+            location_id: true
+          }
+        },
+        logs: {
+          orderBy: { created_at: "asc" },
+          include: {
+            actor_user: {
+              select: { id: true, name: true, email: true }
+            }
+          }
+        }
+      }
+    }),
+    prisma.cleaner_penalties.count({ where })
+  ]);
+
+  // Aggregate total pending deductions and counts per cleaner for this company
+  const pendingAggregates = await prisma.cleaner_penalties.groupBy({
+    by: ["cleaner_user_id"],
+    where: {
+      company_id: companyIdBigInt,
+      status: { in: ["PENDING", "DISPUTED", "UNDER_REVIEW", "PENDING_APPROVAL"] }
+    },
+    _sum: {
+      calculated_amount: true
+    },
+    _count: {
+      id: true
+    }
+  });
+
+  const cleanerPendingMap = {};
+  for (const item of pendingAggregates) {
+    if (item.cleaner_user_id) {
+      cleanerPendingMap[String(item.cleaner_user_id)] = {
+        pending_amount: Number(Number(item._sum?.calculated_amount || 0).toFixed(2)),
+        pending_count: item._count?.id || 0
+      };
+    }
+  }
+
+  return {
+    penalties: penalties.map((p) => {
+      const pendingInfo = cleanerPendingMap[String(p.cleaner_user_id)] || { pending_amount: 0, pending_count: 0 };
+      return {
+        ...p,
+        cleaner: p.cleaner_user,
+        cleaner_pending_amount: pendingInfo.pending_amount,
+        cleaner_pending_count: pendingInfo.pending_count
+      };
+    }),
+    total,
+    page: Number(page),
+    limit: Number(limit),
+    totalPages: Math.ceil(total / take),
+    cleaners_pending: cleanerPendingMap
+  };
+};
+
+export const getPenaltySummary = async (company_id, { start_date, end_date, cleaner_id, location_id, currentUser = null } = {}) => {
+  const companyIdBigInt = BigInt(company_id);
+  const where = { company_id: companyIdBigInt };
+
+  if (cleaner_id && cleaner_id !== "ALL") {
+    where.cleaner_user_id = BigInt(cleaner_id);
+  }
+  if (location_id && location_id !== "ALL") {
+    where.location_id = BigInt(location_id);
+  }
+
+  if (currentUser) {
+    const roleId = Number(currentUser.role_id);
+    const userIdBigInt = currentUser.id ? BigInt(currentUser.id) : null;
+
+    if (userIdBigInt && (roleId === 3 || roleId === 7)) {
+      const locationIds = await getAuthorizedSupervisorLocationIds(userIdBigInt);
+
+      where.OR = [
+        { assigned_approver_id: userIdBigInt },
+        { location_id: { in: locationIds } }
+      ];
+    } else if (userIdBigInt && roleId === 5) {
+      where.cleaner_user_id = userIdBigInt;
+    }
+  }
+
+  if (start_date || end_date) {
+    where.business_date = {};
+    if (start_date) where.business_date.gte = new Date(start_date);
+    if (end_date) where.business_date.lte = new Date(end_date);
+  }
+
+  const penalties = await prisma.cleaner_penalties.findMany({
+    where,
+    select: {
+      cleaner_user_id: true,
+      status: true,
+      calculated_amount: true,
+      approved_amount: true,
+      dispute_reason: true,
+      disputed_at: true
+    }
+  });
+
+  const summary = {
+    total_count: penalties.length,
+    pending_count: 0,
+    approved_count: 0,
+    rejected_count: 0,
+    disputed_count: 0,
+    reversed_count: 0,
+    total_calculated_amount: 0,
+    total_approved_amount: 0,
+    pending_amount: 0,
+    disputed_amount: 0,
+    dispute_waived_count: 0,
+    dispute_upheld_count: 0,
+    cleaners_pending: {}
+  };
+
+  for (const p of penalties) {
+    const calc = Number(p.calculated_amount || 0);
+    const apprv = Number(p.approved_amount || 0);
+    summary.total_calculated_amount += calc;
+
+    const isPendingStatus = ["PENDING", "DISPUTED", "UNDER_REVIEW", "PENDING_APPROVAL"].includes(p.status);
+    if (isPendingStatus && p.cleaner_user_id) {
+      const cid = String(p.cleaner_user_id);
+      if (!summary.cleaners_pending[cid]) {
+        summary.cleaners_pending[cid] = { pending_amount: 0, pending_count: 0 };
+      }
+      summary.cleaners_pending[cid].pending_amount += calc;
+      summary.cleaners_pending[cid].pending_count += 1;
+    }
+
+    switch (p.status) {
+      case "PENDING":
+      case "UNDER_REVIEW":
+        summary.pending_count++;
+        summary.pending_amount += calc;
+        break;
+      case "APPROVED":
+        summary.approved_count++;
+        summary.total_approved_amount += apprv;
+        if (p.disputed_at) {
+          summary.dispute_upheld_count++;
+        }
+        break;
+      case "REJECTED":
+        summary.rejected_count++;
+        if (p.disputed_at) {
+          summary.dispute_waived_count++;
+        }
+        break;
+      case "DISPUTED":
+        summary.disputed_count++;
+        summary.pending_amount += calc;
+        summary.disputed_amount += calc;
+        break;
+      case "REVERSED":
+        summary.reversed_count++;
+        break;
+      default:
+        break;
+    }
+  }
+
+  // Format cleaner pending amounts
+  for (const cid in summary.cleaners_pending) {
+    summary.cleaners_pending[cid].pending_amount = Number(summary.cleaners_pending[cid].pending_amount.toFixed(2));
+  }
+
+  summary.total_calculated_amount = Number(summary.total_calculated_amount.toFixed(2));
+  summary.total_approved_amount = Number(summary.total_approved_amount.toFixed(2));
+  summary.pending_amount = Number(summary.pending_amount.toFixed(2));
+  summary.disputed_amount = Number(summary.disputed_amount.toFixed(2));
+  summary.total_disputes_count = summary.disputed_count + summary.dispute_waived_count + summary.dispute_upheld_count;
+
+  return summary;
+};
+
+export const getPenaltyById = async (id, company_id) => {
+  const penalty = await prisma.cleaner_penalties.findFirst({
+    where: {
+      id: BigInt(id),
+      company_id: BigInt(company_id)
+    },
+    include: {
+      cleaner_user: {
+        select: { id: true, name: true, email: true, phone: true }
+      },
+      location: {
+        select: { id: true, name: true, address: true, city: true, code: true }
+      },
+      rule: true,
+      violation: true,
+      review: {
+        select: {
+          id: true,
+          score: true,
+          attempt_no: true,
+          review_type: true,
+          before_photo: true,
+          after_photo: true,
+          initial_comment: true,
+          final_comment: true,
+          created_at: true
+        }
+      },
+      logs: {
+        orderBy: { created_at: "asc" },
+        include: {
+          actor_user: {
+            select: { id: true, name: true, email: true }
+          }
+        }
+      },
+      assigned_approver: {
+        select: { id: true, name: true, email: true }
+      },
+      approver_user: {
+        select: { id: true, name: true, email: true }
+      }
+    }
+  });
+
+  if (!penalty) {
+    throw new Error(`Penalty #${id} not found for company #${company_id}`);
+  }
+
+  // Also calculate cleaner total pending amount
+  let cleaner_pending_amount = 0;
+  let cleaner_pending_count = 0;
+  if (penalty.cleaner_user_id) {
+    const cleanerPending = await prisma.cleaner_penalties.aggregate({
+      where: {
+        company_id: BigInt(company_id),
+        cleaner_user_id: penalty.cleaner_user_id,
+        status: { in: ["PENDING", "DISPUTED", "UNDER_REVIEW", "PENDING_APPROVAL"] }
+      },
+      _sum: { calculated_amount: true },
+      _count: { id: true }
+    });
+    cleaner_pending_amount = Number(Number(cleanerPending._sum?.calculated_amount || 0).toFixed(2));
+    cleaner_pending_count = cleanerPending._count?.id || 0;
+  }
+
+  return {
+    ...penalty,
+    cleaner_pending_amount,
+    cleaner_pending_count
+  };
+};
+
+export const approvePenalty = async (id, company_id, actorUser, { approved_amount, comment } = {}) => {
+  const penaltyId = BigInt(id);
+  const companyIdBigInt = BigInt(company_id);
+
+  const penalty = await prisma.cleaner_penalties.findFirst({
+    where: { id: penaltyId, company_id: companyIdBigInt },
+    include: {
+      cleaner_user: true,
+      assigned_approver: true,
+      location: true
+    }
+  });
+
+  if (!penalty) {
+    throw new Error(`Penalty #${id} not found`);
+  }
+
+  if (["APPROVED", "REJECTED", "REVERSED"].includes(penalty.status)) {
+    throw new Error(`Cannot approve penalty with status "${penalty.status}"`);
+  }
+
+  const wasDisputed = penalty.status === "DISPUTED";
+  const finalAmount = approved_amount !== undefined && approved_amount !== null
+    ? Number(approved_amount)
+    : Number(penalty.calculated_amount);
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const p = await tx.cleaner_penalties.update({
+      where: { id: penaltyId },
+      data: {
+        status: "APPROVED",
+        approval_stage: "APPROVED",
+        approved_amount: finalAmount,
+        approver_user_id: actorUser?.id ? BigInt(actorUser.id) : null,
+        approved_at: new Date()
+      }
+    });
+
+    await tx.cleaner_penalty_logs.create({
+      data: {
+        penalty_id: penaltyId,
+        actor_user_id: actorUser?.id ? BigInt(actorUser.id) : null,
+        action: "APPROVED",
+        previous_status: penalty.status,
+        new_status: "APPROVED",
+        previous_amount: penalty.approved_amount,
+        new_amount: finalAmount,
+        comment: comment || `Penalty approved by ${actorUser?.name || "Authorized Approver"}`
+      }
+    });
+
+    return p;
+  });
+
+  // If resolving a dispute, dispatch dispute resolution notification
+  if (wasDisputed) {
+    dispatchSlaDisputeResolvedAlerts({
+      penalty: updated,
+      cleanerUser: penalty.cleaner_user,
+      actorUser,
+      resolution: "UPHELD",
+      approvedAmount: finalAmount,
+      reason: comment,
+      companyId: company_id
+    }).catch((e) => console.error("Error dispatching dispute resolved alert:", e));
+  }
+
+  return updated;
+};
+
+export const rejectPenalty = async (id, company_id, actorUser, { rejection_reason } = {}) => {
+  const penaltyId = BigInt(id);
+  const companyIdBigInt = BigInt(company_id);
+
+  const penalty = await prisma.cleaner_penalties.findFirst({
+    where: { id: penaltyId, company_id: companyIdBigInt },
+    include: {
+      cleaner_user: true,
+      assigned_approver: true,
+      location: true
+    }
+  });
+
+  if (!penalty) {
+    throw new Error(`Penalty #${id} not found`);
+  }
+
+  if (["REJECTED", "REVERSED"].includes(penalty.status)) {
+    throw new Error(`Cannot reject penalty with status "${penalty.status}"`);
+  }
+
+  const wasDisputed = penalty.status === "DISPUTED";
+  const reason = rejection_reason || "Rejected by supervisor inspection";
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const p = await tx.cleaner_penalties.update({
+      where: { id: penaltyId },
+      data: {
+        status: "REJECTED",
+        approval_stage: "REJECTED",
+        approved_amount: 0,
+        rejection_reason: reason,
+        approver_user_id: actorUser?.id ? BigInt(actorUser.id) : null
+      }
+    });
+
+    await tx.cleaner_penalty_logs.create({
+      data: {
+        penalty_id: penaltyId,
+        actor_user_id: actorUser?.id ? BigInt(actorUser.id) : null,
+        action: "REJECTED",
+        previous_status: penalty.status,
+        new_status: "REJECTED",
+        previous_amount: penalty.approved_amount,
+        new_amount: 0,
+        comment: reason
+      }
+    });
+
+    return p;
+  });
+
+  // If resolving a dispute, dispatch dispute resolution notification
+  if (wasDisputed) {
+    dispatchSlaDisputeResolvedAlerts({
+      penalty: updated,
+      cleanerUser: penalty.cleaner_user,
+      actorUser,
+      resolution: "WAIVED",
+      approvedAmount: 0,
+      reason,
+      companyId: company_id
+    }).catch((e) => console.error("Error dispatching dispute resolved alert:", e));
+  }
+
+  return updated;
+};
+
+export const disputePenalty = async (id, company_id, actorUser, { dispute_reason } = {}) => {
+  const penaltyId = BigInt(id);
+  const companyIdBigInt = BigInt(company_id);
+
+  const penalty = await prisma.cleaner_penalties.findFirst({
+    where: { id: penaltyId, company_id: companyIdBigInt },
+    include: {
+      cleaner_user: true,
+      assigned_approver: true,
+      location: true
+    }
+  });
+
+  if (!penalty) {
+    throw new Error(`Penalty #${id} not found`);
+  }
+
+  const reason = dispute_reason || "Cleaner filed a dispute against deduction";
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const p = await tx.cleaner_penalties.update({
+      where: { id: penaltyId },
+      data: {
+        status: "DISPUTED",
+        approval_stage: "DISPUTED",
+        dispute_reason: reason,
+        disputed_at: new Date()
+      }
+    });
+
+    await tx.cleaner_penalty_logs.create({
+      data: {
+        penalty_id: penaltyId,
+        actor_user_id: actorUser?.id ? BigInt(actorUser.id) : null,
+        action: "DISPUTED",
+        previous_status: penalty.status,
+        new_status: "DISPUTED",
+        previous_amount: penalty.approved_amount,
+        new_amount: penalty.approved_amount,
+        comment: reason
+      }
+    });
+
+    return p;
+  });
+
+  // Dispatch dispute raised alert to supervisors & admins
+  dispatchSlaDisputeRaisedAlerts({
+    penalty: updated,
+    cleanerUser: penalty.cleaner_user,
+    disputeReason: reason,
+    companyId: company_id
+  }).catch((e) => console.error("Error dispatching dispute raised alert:", e));
+
+  return updated;
+};
+
+export const reversePenalty = async (id, company_id, actorUser, { reversal_reason } = {}) => {
+  const penaltyId = BigInt(id);
+  const companyIdBigInt = BigInt(company_id);
+
+  const penalty = await prisma.cleaner_penalties.findFirst({
+    where: { id: penaltyId, company_id: companyIdBigInt }
+  });
+
+  if (!penalty) {
+    throw new Error(`Penalty #${id} not found`);
+  }
+
+  const reason = reversal_reason || "Management decision: reversed deduction";
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const p = await tx.cleaner_penalties.update({
+      where: { id: penaltyId },
+      data: {
+        status: "REVERSED",
+        approval_stage: "REVERSED",
+        approved_amount: 0,
+        reversal_reason: reason
+      }
+    });
+
+    await tx.cleaner_penalty_logs.create({
+      data: {
+        penalty_id: penaltyId,
+        actor_user_id: actorUser?.id ? BigInt(actorUser.id) : null,
+        action: "REVERSED",
+        previous_status: penalty.status,
+        new_status: "REVERSED",
+        previous_amount: penalty.approved_amount,
+        new_amount: 0,
+        comment: reason
+      }
+    });
+
+    return p;
+  });
+
+  return updated;
+};
+
+export const getViolations = async (company_id, { cleaner_id, location_id, page = 1, limit = 20, currentUser = null } = {}) => {
+  const companyIdBigInt = BigInt(company_id);
+  const where = { company_id: companyIdBigInt };
+
+  if (currentUser) {
+    const roleId = Number(currentUser.role_id);
+    const userIdBigInt = currentUser.id ? BigInt(currentUser.id) : null;
+
+    if (userIdBigInt && (roleId === 3 || roleId === 7)) {
+      const locationIds = await getAuthorizedSupervisorLocationIds(userIdBigInt);
+      where.location_id = { in: locationIds };
+    } else if (userIdBigInt && roleId === 5) {
+      where.cleaner_id = userIdBigInt;
+    }
+  }
+
+  if (cleaner_id && cleaner_id !== "ALL") {
+    where.cleaner_user_id = BigInt(cleaner_id);
+  }
+  if (location_id && location_id !== "ALL") {
+    where.location_id = BigInt(location_id);
+  }
+
+  const skip = (Number(page) - 1) * Number(limit);
+  const take = Number(limit);
+
+  const [violations, total] = await Promise.all([
+    prisma.sla_violations.findMany({
+      where,
+      skip,
+      take,
+      orderBy: { created_at: "desc" },
+      include: {
+        cleaner_user: {
+          select: { id: true, name: true, email: true }
+        },
+        location: {
+          select: { id: true, name: true, address: true }
+        },
+        rule: {
+          select: { id: true, rule_code: true, name: true, violation_category: true }
+        }
+      }
+    }),
+    prisma.sla_violations.count({ where })
+  ]);
+
+  return {
+    violations: violations.map((v) => ({
+      ...v,
+      cleaner: v.cleaner_user,
+      rule_code: v.rule?.rule_code,
+      status: v.evaluation_status
+    })),
+    total,
+    page: Number(page),
+    limit: Number(limit),
+    totalPages: Math.ceil(total / take)
+  };
+};
+

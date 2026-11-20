@@ -160,3 +160,46 @@ export const getCleanerReviewPhotos = async (req, res) => {
     return res.status(500).json({ message: "Internal server error" });
   }
 };
+
+/**
+ * Proxy download endpoint to avoid browser CORS issues with Google Cloud Storage
+ */
+export const downloadPhoto = async (req, res) => {
+  try {
+    const { url, filename } = req.query;
+    if (!url) {
+      return res.status(400).json({ message: "Image URL is required" });
+    }
+
+    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+      return res.status(400).json({ message: "Invalid URL scheme" });
+    }
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      return res
+        .status(response.status)
+        .json({ message: "Failed to fetch image from storage" });
+    }
+
+    const contentType =
+      response.headers.get("content-type") || "application/octet-stream";
+    const cleanFilename = (filename || "downloaded_image")
+      .replace(/[^\w\.\-\_]/g, "_")
+      .trim();
+
+    res.setHeader("Content-Type", contentType);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${cleanFilename}"`
+    );
+
+    const arrayBuffer = await response.arrayBuffer();
+    return res.send(Buffer.from(arrayBuffer));
+  } catch (error) {
+    console.error("Error downloading photo:", error);
+    return res
+      .status(500)
+      .json({ message: "Failed to download photo", error: error.message });
+  }
+};
