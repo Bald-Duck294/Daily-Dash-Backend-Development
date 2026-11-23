@@ -552,7 +552,7 @@ model sla_escalations {
   snapshot_hierarchy     Json                  @db.Json
   due_at                 DateTime?             @db.Timestamptz(6)
   created_at             DateTime              @default(now()) @db.Timestamptz(6)
-  updated_at             DateTime              @updatedAt @db.Timestamptz(6)
+  updated_at             DateTime              @default(now()) @updatedAt @db.Timestamptz(6)
   resolved_at            DateTime?             @db.Timestamptz(6)
   business_date          DateTime?             @default(now()) @db.Date
   cleaner_user_id        BigInt?
@@ -754,7 +754,7 @@ model cleaning_requests {
   user_id                                            BigInt?
   user_name                                          String?   @db.VarChar(255)
   user_phone                                         String?   @db.VarChar(50)
-  issue_type                                         String    @db.VarChar(100)
+  issue_type                                         String    @db.VarChar(500)
   description                                        String?
   photos                                             String[]  @default([])
   priority                                           String?   @default("normal") @db.VarChar(20)
