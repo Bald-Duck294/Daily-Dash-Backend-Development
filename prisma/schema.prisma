@@ -40,13 +40,13 @@ model companies {
   registered_users        registered_users[]
   shifts                  shifts[]
   sla_escalations         sla_escalations[]
-  sla_penalty_rules       sla_penalty_rules[]
-  sla_rule_books          sla_rule_books[]
-  sla_violations          sla_violations[]
-  usageCategories         usage_category[]
   user_review             user_review[]
   user_review_qr          user_review_qr[]
   users                   users[]
+  usageCategories         usage_category[]
+  sla_rule_books          sla_rule_books[]
+  sla_penalty_rules       sla_penalty_rules[]
+  sla_violations          sla_violations[]
 }
 
 model hygiene_scores {
@@ -67,7 +67,6 @@ model hygiene_scores {
   locations      locations?       @relation(fields: [location_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
-/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model locations {
   id                     BigInt                @id @default(autoincrement())
   name                   String                @db.VarChar(255)
@@ -134,7 +133,6 @@ model location_types {
   locations            locations[]
 }
 
-/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model review {
   id            BigInt          @id @default(autoincrement())
   user_id       BigInt
@@ -165,54 +163,54 @@ model sessions {
 }
 
 model users {
-  id                                                             BigInt                 @id @default(autoincrement())
-  name                                                           String?                @db.VarChar(255)
-  email                                                          String?                @unique @db.VarChar(255)
-  password                                                       String?
-  company_id                                                     BigInt?
-  created_at                                                     DateTime?              @default(now()) @db.Timestamp(6)
-  updated_at                                                     DateTime?              @default(now()) @db.Timestamp(6)
-  phone                                                          String?                @unique(map: "unique_phone") @db.VarChar(15)
-  age                                                            Int?
-  birthdate                                                      DateTime?              @db.Date
-  role_id                                                        Int?
-  deleted_at                                                     DateTime?
-  token                                                          String?
-  fcm_token                                                      String?                @db.VarChar(255)
-  avatar_url                                                     String?
-  google_id                                                      String?                @unique
-  facility_company_id                                            BigInt?
-  created_by                                                     BigInt?
-  otp                                                            String?
-  otp_expires_at                                                 DateTime?              @db.Timestamp(6)
-  activity_logs                                                  activity_logs[]
-  cleaner_assignments_as_cleaner                                 cleaner_assignments[]  @relation("CleanerUser")
-  cleaner_assignments_as_supervisor                              cleaner_assignments[]  @relation("Supervisor")
-  penalties_approved                                             cleaner_penalties[]    @relation("PenaltyApprovedBy")
-  penalties_assigned                                             cleaner_penalties[]    @relation("PenaltyAssignedApprover")
-  penalties_as_cleaner                                           cleaner_penalties[]    @relation("PenaltyCleaner")
-  penalty_logs_as_actor                                          cleaner_penalty_logs[] @relation("PenaltyLogActor")
-  cleaner_reviews                                                cleaner_review[]       @relation("CleanerReviews")
+  id                                BigInt                 @id @default(autoincrement())
+  name                              String?                @db.VarChar(255)
+  email                             String?                @unique @db.VarChar(255)
+  password                          String?
+  company_id                        BigInt?
+  created_at                        DateTime?              @default(now()) @db.Timestamp(6)
+  updated_at                        DateTime?              @default(now()) @db.Timestamp(6)
+  phone                             String?                @unique(map: "unique_phone") @db.VarChar(15)
+  age                               Int?
+  birthdate                         DateTime?              @db.Date
+  role_id                           Int?
+  deleted_at                        DateTime?
+  token                             String?
+  fcm_token                         String?                @db.VarChar(255)
+  avatar_url                        String?
+  google_id                         String?                @unique
+  facility_company_id               BigInt?
+  created_by                        BigInt?
+  otp                               String?
+  otp_expires_at                    DateTime?              @db.Timestamp(6)
+  activity_logs                     activity_logs[]
+  cleaner_assignments_as_cleaner    cleaner_assignments[]  @relation("CleanerUser")
+  cleaner_assignments_as_supervisor cleaner_assignments[]  @relation("Supervisor")
+  cleaner_reviews                   cleaner_review[]       @relation("CleanerReviews")
+  hygiene_scores                    hygiene_scores[]
+  refresh_tokens                    refresh_tokens[]
+  saved_locations                   saved_locations[]
+  sessions                          sessions[]
+  shift_assignments                 shift_assignments[]
+  escalation_log_actions            sla_escalation_logs[]  @relation("EscalationLogActor")
+  escalations_as_cleaner            sla_escalations[]      @relation("CleanerEscalations")
+  user_fcm_tokens                   user_fcm_tokens[]
+  user_review                       user_review[]
+  sla_rule_books_created            sla_rule_books[]       @relation("RuleBookCreatedBy")
+  sla_rule_books_approved           sla_rule_books[]       @relation("RuleBookApprovedBy")
+  sla_violations_as_cleaner         sla_violations[]       @relation("ViolationCleaner")
+  penalties_as_cleaner              cleaner_penalties[]    @relation("PenaltyCleaner")
+  penalties_assigned                cleaner_penalties[]    @relation("PenaltyAssignedApprover")
+  penalties_approved                cleaner_penalties[]    @relation("PenaltyApprovedBy")
+  penalty_logs_as_actor             cleaner_penalty_logs[] @relation("PenaltyLogActor")
+  users                             users?                 @relation("usersTousers", fields: [created_by], references: [id], map: "fk_users_created_by")
+  other_users                       users[]                @relation("usersTousers")
+  companies                         companies?             @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  facility_companies                facility_companies?    @relation(fields: [facility_company_id], references: [id])
+  role                              Role?                  @relation(fields: [role_id], references: [id])
   cleaning_requests_cleaning_requests_assigned_cleaner_idTousers cleaning_requests[]    @relation("cleaning_requests_assigned_cleaner_idTousers")
   cleaning_requests_cleaning_requests_supervisor_idTousers       cleaning_requests[]    @relation("cleaning_requests_supervisor_idTousers")
   cleaning_requests_cleaning_requests_user_idTousers             cleaning_requests[]    @relation("cleaning_requests_user_idTousers")
-  hygiene_scores                                                 hygiene_scores[]
-  refresh_tokens                                                 refresh_tokens[]
-  saved_locations                                                saved_locations[]
-  sessions                                                       sessions[]
-  shift_assignments                                              shift_assignments[]
-  escalation_log_actions                                         sla_escalation_logs[]  @relation("EscalationLogActor")
-  escalations_as_cleaner                                         sla_escalations[]      @relation("CleanerEscalations")
-  sla_rule_books_approved                                        sla_rule_books[]       @relation("RuleBookApprovedBy")
-  sla_rule_books_created                                         sla_rule_books[]       @relation("RuleBookCreatedBy")
-  sla_violations_as_cleaner                                      sla_violations[]       @relation("ViolationCleaner")
-  user_fcm_tokens                                                user_fcm_tokens[]
-  user_review                                                    user_review[]
-  users                                                          users?                 @relation("usersTousers", fields: [created_by], references: [id], map: "fk_users_created_by")
-  other_users                                                    users[]                @relation("usersTousers")
-  companies                                                      companies?             @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  facility_companies                                             facility_companies?    @relation(fields: [facility_company_id], references: [id])
-  role                                                           Role?                  @relation(fields: [role_id], references: [id])
 }
 
 model configurations {
@@ -295,7 +293,6 @@ model user_review {
   users       users?     @relation(fields: [user_id], references: [id])
 }
 
-/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model spatial_ref_sys {
   srid      Int     @id
   auth_name String? @db.VarChar(256)
@@ -595,56 +592,58 @@ model sla_escalation_logs {
 }
 
 model sla_rule_books {
-  id                      BigInt              @id @default(autoincrement())
+  id                      BigInt    @id @default(autoincrement())
   company_id              BigInt
-  name                    String              @db.VarChar(255)
-  version                 Int                 @default(1)
-  status                  String              @default("DRAFT") @db.VarChar(20)
-  effective_from          DateTime            @default(now()) @db.Timestamptz(6)
-  effective_to            DateTime?           @db.Timestamptz(6)
-  rate_cards              Json?
-  business_day_start_hour Int                 @default(0)
-  approval_policy         Json?
+  name                    String    @db.VarChar(255)
+  version                 Int       @default(1)
+  status                  String    @default("DRAFT") @db.VarChar(20)
+  effective_from          DateTime  @default(now()) @db.Timestamptz(6)
+  effective_to            DateTime? @db.Timestamptz(6)
+  rate_cards              Json?     @db.JsonB
+  business_day_start_hour Int       @default(0)
+  approval_policy         Json?     @db.JsonB
   created_by              BigInt?
   approved_by             BigInt?
-  created_at              DateTime            @default(now()) @db.Timestamptz(6)
-  updated_at              DateTime            @default(now()) @updatedAt @db.Timestamptz(6)
-  rules                   sla_penalty_rules[]
-  approver                users?              @relation("RuleBookApprovedBy", fields: [approved_by], references: [id])
-  company                 companies           @relation(fields: [company_id], references: [id], onDelete: Cascade)
-  creator                 users?              @relation("RuleBookCreatedBy", fields: [created_by], references: [id])
+  created_at              DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  company  companies           @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  creator  users?              @relation("RuleBookCreatedBy", fields: [created_by], references: [id])
+  approver users?              @relation("RuleBookApprovedBy", fields: [approved_by], references: [id])
+  rules    sla_penalty_rules[]
 
   @@unique([company_id, version])
   @@index([company_id, status])
 }
 
 model sla_penalty_rules {
-  id                       BigInt              @id @default(autoincrement())
+  id                       BigInt   @id @default(autoincrement())
   rule_book_id             BigInt
   company_id               BigInt
-  rule_code                String              @db.VarChar(50)
-  name                     String              @db.VarChar(255)
+  rule_code                String   @db.VarChar(50)
+  name                     String   @db.VarChar(255)
   description              String?
-  violation_category       String              @db.VarChar(50)
-  violation_type           String              @db.VarChar(50)
-  scope                    String              @default("TASK_WISE") @db.VarChar(20)
-  condition_config         Json                @default("{}")
-  calculation_method       String              @default("FIXED_AMOUNT") @db.VarChar(50)
-  penalty_value            Decimal             @default(0.00) @db.Decimal(10, 2)
-  max_penalty_cap          Decimal?            @db.Decimal(10, 2)
-  min_penalty              Decimal?            @db.Decimal(10, 2)
-  per_minute_rate          Decimal?            @db.Decimal(10, 2)
-  grace_period_minutes     Int?                @default(0)
-  task_value_reference     Decimal?            @db.Decimal(10, 2)
-  retry_resolution_policy  String              @default("WAIT_FOR_RETRY_OUTCOME") @db.VarChar(50)
-  approval_override_policy Json?
-  is_active                Boolean             @default(true)
-  created_at               DateTime            @default(now()) @db.Timestamptz(6)
-  updated_at               DateTime            @default(now()) @updatedAt @db.Timestamptz(6)
-  penalties                cleaner_penalties[]
-  company                  companies           @relation(fields: [company_id], references: [id], onDelete: Cascade)
-  rule_book                sla_rule_books      @relation(fields: [rule_book_id], references: [id], onDelete: Cascade)
-  violations               sla_violations[]
+  violation_category       String   @db.VarChar(50)
+  violation_type           String   @db.VarChar(50)
+  scope                    String   @default("TASK_WISE") @db.VarChar(20)
+  condition_config         Json     @default("{}") @db.JsonB
+  calculation_method       String   @default("FIXED_AMOUNT") @db.VarChar(50)
+  penalty_value            Decimal  @default(0.00) @db.Decimal(10, 2)
+  max_penalty_cap          Decimal? @db.Decimal(10, 2)
+  min_penalty              Decimal? @db.Decimal(10, 2)
+  per_minute_rate          Decimal? @db.Decimal(10, 2)
+  grace_period_minutes     Int?     @default(0)
+  task_value_reference     Decimal? @db.Decimal(10, 2)
+  retry_resolution_policy  String   @default("WAIT_FOR_RETRY_OUTCOME") @db.VarChar(50)
+  approval_override_policy Json?    @db.JsonB
+  is_active                Boolean  @default(true)
+  created_at               DateTime @default(now()) @db.Timestamptz(6)
+  updated_at               DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  rule_book  sla_rule_books      @relation(fields: [rule_book_id], references: [id], onDelete: Cascade)
+  company    companies           @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  violations sla_violations[]
+  penalties  cleaner_penalties[]
 
   @@unique([rule_book_id, rule_code])
   @@index([company_id, is_active])
@@ -652,29 +651,30 @@ model sla_penalty_rules {
 }
 
 model sla_violations {
-  id                  BigInt              @id @default(autoincrement())
+  id                  BigInt   @id @default(autoincrement())
   company_id          BigInt
   cleaner_user_id     BigInt
   location_id         BigInt
   review_id           BigInt?
   rule_id             BigInt
-  rule_version        Int                 @default(1)
-  violation_category  String              @db.VarChar(50)
-  violation_type      String              @db.VarChar(50)
-  occurrence_time     DateTime            @default(now()) @db.Timestamptz(6)
-  business_date       DateTime            @default(now()) @db.Date
-  score               Decimal?            @db.Decimal(5, 2)
-  threshold           Decimal?            @db.Decimal(5, 2)
-  evidence_references Json?
-  evaluation_status   String              @default("DETECTED") @db.VarChar(30)
-  details             Json?
-  created_at          DateTime            @default(now()) @db.Timestamptz(6)
-  penalties           cleaner_penalties[]
-  cleaner_user        users               @relation("ViolationCleaner", fields: [cleaner_user_id], references: [id], onDelete: Cascade)
-  company             companies           @relation(fields: [company_id], references: [id], onDelete: Cascade)
-  location            locations           @relation(fields: [location_id], references: [id], onDelete: Cascade)
-  review              cleaner_review?     @relation(fields: [review_id], references: [id])
-  rule                sla_penalty_rules   @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+  rule_version        Int      @default(1)
+  violation_category  String   @db.VarChar(50)
+  violation_type      String   @db.VarChar(50)
+  occurrence_time     DateTime @default(now()) @db.Timestamptz(6)
+  business_date       DateTime @default(now()) @db.Date
+  score               Decimal? @db.Decimal(5, 2)
+  threshold           Decimal? @db.Decimal(5, 2)
+  evidence_references Json?    @db.JsonB
+  evaluation_status   String   @default("DETECTED") @db.VarChar(30)
+  details             Json?    @db.JsonB
+  created_at          DateTime @default(now()) @db.Timestamptz(6)
+
+  company      companies           @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  cleaner_user users               @relation("ViolationCleaner", fields: [cleaner_user_id], references: [id], onDelete: Cascade)
+  location     locations           @relation(fields: [location_id], references: [id], onDelete: Cascade)
+  review       cleaner_review?     @relation(fields: [review_id], references: [id], onDelete: SetNull)
+  rule         sla_penalty_rules   @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+  penalties    cleaner_penalties[]
 
   @@index([company_id, business_date])
   @@index([cleaner_user_id, business_date])
@@ -683,46 +683,47 @@ model sla_violations {
 }
 
 model cleaner_penalties {
-  id                    BigInt                 @id @default(autoincrement())
-  penalty_number        String                 @unique @db.VarChar(50)
-  deduplication_key     String                 @unique @db.VarChar(255)
+  id                    BigInt    @id @default(autoincrement())
+  penalty_number        String    @unique @db.VarChar(50)
+  deduplication_key     String    @unique @db.VarChar(255)
   company_id            BigInt
   cleaner_user_id       BigInt
   violation_id          BigInt?
   rule_id               BigInt
-  rule_version          Int                    @default(1)
-  scope                 String                 @default("TASK_WISE") @db.VarChar(20)
-  business_date         DateTime               @default(now()) @db.Date
+  rule_version          Int       @default(1)
+  scope                 String    @default("TASK_WISE") @db.VarChar(20)
+  business_date         DateTime  @default(now()) @db.Date
   location_id           BigInt
   review_id             BigInt?
-  calculation_method    String                 @default("FIXED_AMOUNT") @db.VarChar(50)
-  base_task_value       Decimal?               @db.Decimal(10, 2)
-  calculated_amount     Decimal                @default(0.00) @db.Decimal(10, 2)
-  approved_amount       Decimal                @default(0.00) @db.Decimal(10, 2)
-  calculation_snapshot  Json                   @default("{}")
-  current_approval_tier Int                    @default(1)
-  designated_role_name  String?                @db.VarChar(50)
+  calculation_method    String    @default("FIXED_AMOUNT") @db.VarChar(50)
+  base_task_value       Decimal?  @db.Decimal(10, 2)
+  calculated_amount     Decimal   @default(0.00) @db.Decimal(10, 2)
+  approved_amount       Decimal   @default(0.00) @db.Decimal(10, 2)
+  calculation_snapshot  Json      @default("{}") @db.JsonB
+  current_approval_tier Int       @default(1)
+  designated_role_name  String?   @db.VarChar(50)
   assigned_approver_id  BigInt?
-  approval_stage        String                 @default("PENDING_STAGE_1") @db.VarChar(50)
-  approval_chain        Json?
-  status                String                 @default("PENDING") @db.VarChar(20)
+  approval_stage        String    @default("PENDING_STAGE_1") @db.VarChar(50)
+  approval_chain        Json?     @db.JsonB
+  status                String    @default("PENDING") @db.VarChar(20)
   approver_user_id      BigInt?
-  approved_at           DateTime?              @db.Timestamptz(6)
+  approved_at           DateTime? @db.Timestamptz(6)
   rejection_reason      String?
   reversal_reason       String?
   dispute_reason        String?
-  disputed_at           DateTime?              @db.Timestamptz(6)
-  created_at            DateTime               @default(now()) @db.Timestamptz(6)
-  updated_at            DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
-  approver_user         users?                 @relation("PenaltyApprovedBy", fields: [approver_user_id], references: [id])
-  assigned_approver     users?                 @relation("PenaltyAssignedApprover", fields: [assigned_approver_id], references: [id])
-  cleaner_user          users                  @relation("PenaltyCleaner", fields: [cleaner_user_id], references: [id], onDelete: Cascade)
-  company               companies              @relation(fields: [company_id], references: [id], onDelete: Cascade)
-  location              locations              @relation(fields: [location_id], references: [id], onDelete: Cascade)
-  review                cleaner_review?        @relation(fields: [review_id], references: [id])
-  rule                  sla_penalty_rules      @relation(fields: [rule_id], references: [id], onDelete: Cascade)
-  violation             sla_violations?        @relation(fields: [violation_id], references: [id])
-  logs                  cleaner_penalty_logs[]
+  disputed_at           DateTime? @db.Timestamptz(6)
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  company           companies              @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  cleaner_user      users                  @relation("PenaltyCleaner", fields: [cleaner_user_id], references: [id], onDelete: Cascade)
+  violation         sla_violations?        @relation(fields: [violation_id], references: [id], onDelete: SetNull)
+  rule              sla_penalty_rules      @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+  location          locations              @relation(fields: [location_id], references: [id], onDelete: Cascade)
+  review            cleaner_review?        @relation(fields: [review_id], references: [id], onDelete: SetNull)
+  assigned_approver users?                 @relation("PenaltyAssignedApprover", fields: [assigned_approver_id], references: [id])
+  approver_user     users?                 @relation("PenaltyApprovedBy", fields: [approver_user_id], references: [id])
+  logs              cleaner_penalty_logs[]
 
   @@index([company_id, cleaner_user_id, business_date])
   @@index([status, business_date])
@@ -732,19 +733,20 @@ model cleaner_penalties {
 }
 
 model cleaner_penalty_logs {
-  id              BigInt            @id @default(autoincrement())
+  id              BigInt   @id @default(autoincrement())
   penalty_id      BigInt
   actor_user_id   BigInt?
-  action          String            @db.VarChar(50)
-  previous_status String?           @db.VarChar(20)
-  new_status      String            @db.VarChar(20)
-  previous_amount Decimal?          @db.Decimal(10, 2)
-  new_amount      Decimal?          @db.Decimal(10, 2)
+  action          String   @db.VarChar(50)
+  previous_status String?  @db.VarChar(20)
+  new_status      String   @db.VarChar(20)
+  previous_amount Decimal? @db.Decimal(10, 2)
+  new_amount      Decimal? @db.Decimal(10, 2)
   comment         String?
-  metadata        Json?
-  created_at      DateTime          @default(now()) @db.Timestamptz(6)
-  actor_user      users?            @relation("PenaltyLogActor", fields: [actor_user_id], references: [id])
-  penalty         cleaner_penalties @relation(fields: [penalty_id], references: [id], onDelete: Cascade)
+  metadata        Json?    @db.JsonB
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+
+  penalty    cleaner_penalties @relation(fields: [penalty_id], references: [id], onDelete: Cascade)
+  actor_user users?            @relation("PenaltyLogActor", fields: [actor_user_id], references: [id])
 
   @@index([penalty_id, created_at])
   @@index([actor_user_id, created_at])
