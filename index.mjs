@@ -38,6 +38,8 @@ import userReviewQrRoutes from "./routes/userReviewQrRoutes.js";
 import slaLogsRoutes from "./routes/slaLogsRoutes.js";
 import slaCronRoutes from "./routes/slaCronRoutes.js";
 import reviewManagementRoutes from "./routes/reviewManagementRoutes.js";
+import featureManagementRoutes from "./routes/featureManagementRoutes.js";
+import cleaningRequestRoutes from "./routes/cleaningRequestRoutes.js";
 import { startSlaEscalationWorker } from "./workers/slaEscalationWorker.js";
 import { startSlaPenaltyWorker } from "./workers/slaPenaltyWorker.js";
 dotenv.config();
@@ -150,6 +152,9 @@ app.use("/api/sla-penalty", slaPenaltyRoutes);
 app.use("/api/sla-logs", slaLogsRoutes);
 app.use("/api/sla-cron", slaCronRoutes);
 app.use("/api/review-management", reviewManagementRoutes);
+app.use("/api/feature-management", featureManagementRoutes);
+app.use("/api/cleaning-requests", cleaningRequestRoutes);
+app.use("/api/cleaning_requests", cleaningRequestRoutes);
 // app.use("/api", registered_users_router);
 
 app.use((err, req, res, next) => {
