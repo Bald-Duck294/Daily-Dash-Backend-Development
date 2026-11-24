@@ -3499,6 +3499,21 @@ export const getCleanerPenaltySummaryReport = async (req, res) => {
       });
     }
 
+    // Verify SLA module is active for this company
+    const slaConfig = await prisma.configurations.findFirst({
+      where: {
+        company_id: companyIdBigInt,
+        name: "sla_rules",
+      },
+    });
+
+    if (!slaConfig || !slaConfig.is_active) {
+      return res.status(403).json({
+        status: "error",
+        message: "SLA penalty module is not active for this company",
+      });
+    }
+
     const user = req.user;
     const isAdmin = user?.role_id === 1 || user?.role_id === 2;
     const isSupervisor = user?.role_id === 3 || user?.role_id === 7;
@@ -3797,6 +3812,21 @@ export const getWashroomPenaltySummaryReport = async (req, res) => {
       return res.status(404).json({
         status: "error",
         message: "Company not found",
+      });
+    }
+
+    // Verify SLA module is active for this company
+    const slaConfig = await prisma.configurations.findFirst({
+      where: {
+        company_id: companyIdBigInt,
+        name: "sla_rules",
+      },
+    });
+
+    if (!slaConfig || !slaConfig.is_active) {
+      return res.status(403).json({
+        status: "error",
+        message: "SLA penalty module is not active for this company",
       });
     }
 
