@@ -4072,3 +4072,290 @@ export const getWashroomPenaltySummaryReport = async (req, res) => {
   }
 };
 
+/**
+ * =========================================================================
+ * ATTENDANCE REPORT
+ * Aggregates daily cleaner check-ins, duty logs, working hours, and presence/absence
+ * =========================================================================
+ */
+export const getAttendanceReport = async (req, res) => {
+  try {
+    const {
+      company_id,
+      start_date,
+      end_date,
+      cleaner_id,
+      location_id,
+      status, // "all", "Present", "Absent"
+    } = req.query;
+
+    if (!company_id) {
+      return res.status(400).json({
+        status: "error",
+        message: "company_id is required",
+      });
+    }
+
+    const companyIdBigInt = BigInt(company_id);
+
+    // 1. Fetch company details
+    const company = await prisma.companies.findUnique({
+      where: { id: companyIdBigInt },
+      select: { name: true },
+    });
+
+    // 2. Parse Date Window
+    const today = new Date();
+    const startDateObj = start_date ? new Date(start_date) : new Date(today);
+    startDateObj.setUTCHours(0, 0, 0, 0);
+
+    const endDateObj = end_date ? new Date(end_date) : new Date(startDateObj);
+    endDateObj.setUTCHours(23, 59, 59, 999);
+
+    // Generate list of ISO dates (YYYY-MM-DD)
+    const dateList = [];
+    const curr = new Date(startDateObj);
+    while (curr <= endDateObj) {
+      dateList.push(curr.toISOString().split("T")[0]);
+      curr.setUTCDate(curr.getUTCDate() + 1);
+    }
+
+    // 3. Find Cleaners to include
+    const cleanerWhere = {
+      company_id: companyIdBigInt,
+      role_id: 5, // Cleaner
+      deleted_at: null,
+    };
+
+    if (cleaner_id && cleaner_id !== "all" && cleaner_id !== "undefined") {
+      cleanerWhere.id = BigInt(cleaner_id);
+    }
+
+    if (location_id && location_id !== "all" && location_id !== "undefined") {
+      cleanerWhere.cleaner_assignments_as_cleaner = {
+        some: {
+          location_id: BigInt(location_id),
+          deleted_at: null,
+        },
+      };
+    }
+
+    const cleaners = await prisma.users.findMany({
+      where: cleanerWhere,
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        cleaner_assignments_as_cleaner: {
+          where: { deleted_at: null },
+          select: {
+            locations: {
+              select: { id: true, name: true },
+            },
+          },
+        },
+      },
+      orderBy: { name: "asc" },
+    });
+
+    const cleanerIds = cleaners.map((c) => c.id);
+
+    // 4. Fetch cleaner_review records in the date window
+    const reviewWhere = {
+      company_id: companyIdBigInt,
+      cleaner_user_id: { in: cleanerIds },
+      created_at: {
+        gte: startDateObj,
+        lte: endDateObj,
+      },
+    };
+
+    if (location_id && location_id !== "all" && location_id !== "undefined") {
+      reviewWhere.location_id = BigInt(location_id);
+    }
+
+    const reviews = await prisma.cleaner_review.findMany({
+      where: reviewWhere,
+      select: {
+        id: true,
+        cleaner_user_id: true,
+        location_id: true,
+        created_at: true,
+        score: true,
+        status: true,
+        location: {
+          select: { id: true, name: true },
+        },
+      },
+      orderBy: { created_at: "asc" },
+    });
+
+    // 5. Group reviews by cleaner and date
+    // key: `${cleaner_id}_${dateStr}`
+    const reviewGroups = {};
+    reviews.forEach((rev) => {
+      if (!rev.cleaner_user_id || !rev.created_at) return;
+      const cId = rev.cleaner_user_id.toString();
+      const dStr = new Date(rev.created_at).toISOString().split("T")[0];
+      const key = `${cId}_${dStr}`;
+      if (!reviewGroups[key]) {
+        reviewGroups[key] = [];
+      }
+      reviewGroups[key].push(rev);
+    });
+
+    // 6. Build Daily Attendance Records & Cleaner Summaries
+    let allRecords = [];
+    const cleanerSummaries = [];
+
+    cleaners.forEach((cleaner) => {
+      const cId = cleaner.id.toString();
+      const assignedLocs = Array.from(
+        new Set(
+          (cleaner.cleaner_assignments_as_cleaner || [])
+            .map((a) => a.locations?.name)
+            .filter(Boolean)
+        )
+      );
+
+      let cleanerPresentDays = 0;
+      let cleanerAbsentDays = 0;
+      let cleanerTotalLogs = 0;
+
+      dateList.forEach((dStr) => {
+        const key = `${cId}_${dStr}`;
+        const dayReviews = reviewGroups[key] || [];
+        const isPresent = dayReviews.length > 0;
+
+        if (isPresent) {
+          cleanerPresentDays++;
+          cleanerTotalLogs += dayReviews.length;
+        } else {
+          cleanerAbsentDays++;
+        }
+
+        const firstLog = isPresent ? dayReviews[0].created_at : null;
+        const lastLog = isPresent
+          ? dayReviews[dayReviews.length - 1].created_at
+          : null;
+        const activeLocs = Array.from(
+          new Set(dayReviews.map((r) => r.location?.name).filter(Boolean))
+        );
+
+        allRecords.push({
+          record_id: key,
+          cleaner_id: cId,
+          cleaner_name: cleaner.name || "Unknown",
+          cleaner_phone: cleaner.phone || "-",
+          date: dStr,
+          check_in_time: firstLog,
+          last_active_time: lastLog,
+          assigned_locations: assignedLocs.length > 0 ? assignedLocs : ["Unassigned"],
+          active_locations: activeLocs,
+          cleaning_logs: dayReviews.length,
+          status: isPresent ? "Present" : "Absent",
+        });
+      });
+
+      const totalDays = dateList.length;
+      const attRate =
+        totalDays > 0
+          ? ((cleanerPresentDays / totalDays) * 100).toFixed(1)
+          : "0.0";
+
+      cleanerSummaries.push({
+        cleaner_id: cId,
+        cleaner_name: cleaner.name || "Unknown",
+        cleaner_phone: cleaner.phone || "-",
+        assigned_locations: assignedLocs.length > 0 ? assignedLocs : ["Unassigned"],
+        days_present: cleanerPresentDays,
+        days_absent: cleanerAbsentDays,
+        total_days: totalDays,
+        attendance_rate: `${attRate}%`,
+        total_cleaning_logs: cleanerTotalLogs,
+        avg_daily_cleanings:
+          cleanerPresentDays > 0
+            ? (cleanerTotalLogs / cleanerPresentDays).toFixed(1)
+            : "0.0",
+      });
+    });
+
+    // Filter allRecords by status if specified
+    if (status && status !== "all" && status !== "All") {
+      const targetStatus = status.toLowerCase();
+      allRecords = allRecords.filter(
+        (r) => r.status.toLowerCase() === targetStatus
+      );
+    }
+
+    // Sort by date desc, then cleaner name asc
+    allRecords.sort((a, b) => {
+      if (b.date !== a.date) return b.date.localeCompare(a.date);
+      return a.cleaner_name.localeCompare(b.cleaner_name);
+    });
+
+    // 7. Aggregate KPI Metrics
+    const totalManDays = cleaners.length * dateList.length;
+    const totalPresent = cleanerSummaries.reduce(
+      (sum, c) => sum + c.days_present,
+      0
+    );
+    const totalAbsent = cleanerSummaries.reduce(
+      (sum, c) => sum + c.days_absent,
+      0
+    );
+    const totalCleaningLogs = cleanerSummaries.reduce(
+      (sum, c) => sum + c.total_cleaning_logs,
+      0
+    );
+    const overallRate =
+      totalManDays > 0
+        ? ((totalPresent / totalManDays) * 100).toFixed(1)
+        : "0.0";
+
+    const isSingleCleaner =
+      (cleaner_id && cleaner_id !== "all" && cleaner_id !== "undefined") ||
+      cleaners.length === 1;
+
+    const reportMetadata = {
+      organization: company?.name || "N/A",
+      report_type: "Attendance Report",
+      date_range: {
+        start: dateList[0] || start_date || "Beginning",
+        end: dateList[dateList.length - 1] || end_date || "Now",
+      },
+      generated_on: new Date().toISOString(),
+      total_cleaners: cleaners.length,
+      total_days: dateList.length,
+      total_man_days: totalManDays,
+      total_present: totalPresent,
+      total_absent: totalAbsent,
+      overall_attendance_rate: `${overallRate}%`,
+      total_cleaning_logs: totalCleaningLogs,
+      is_single_cleaner: isSingleCleaner,
+      cleaner_name: isSingleCleaner ? cleaners[0]?.name : null,
+      cleaner_phone: isSingleCleaner ? cleaners[0]?.phone : null,
+      assigned_locations: isSingleCleaner
+        ? cleanerSummaries[0]?.assigned_locations
+        : null,
+    };
+
+    return res.status(200).json({
+      status: "success",
+      message: "Attendance report generated successfully",
+      metadata: serializeBigInt(reportMetadata),
+      cleaner_summaries: serializeBigInt(cleanerSummaries),
+      data: serializeBigInt(allRecords),
+      count: allRecords.length,
+    });
+  } catch (error) {
+    console.error("Error generating attendance report:", error);
+    return res.status(500).json({
+      status: "error",
+      message: "Failed to generate attendance report",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
+
