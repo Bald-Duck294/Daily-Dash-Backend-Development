@@ -25,8 +25,13 @@ import jwt from 'jsonwebtoken';
 import dotenv from "dotenv";
 dotenv.config();
 
-
-const JWT_SECRET = process.env.JWT_SECRETS;
+const getJwtSecret = () => {
+  return (
+    process.env.JWT_SECRETS?.trim() ||
+    process.env.JWT_SECRET?.trim() ||
+    "53-0t9wgwpowgjp3-i3itdglkn"
+  );
+};
 
 export const verifyToken = (req, res, next) => {
   try {
@@ -45,10 +50,10 @@ export const verifyToken = (req, res, next) => {
 
     // console.log(parts, "parts");
     const token = parts[1];
-    // console.log(JWT_SECRET);
+    const secret = getJwtSecret();
 
     // Verify token and extract payload
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, secret);
 
     // console.log(decoded, "decoded")
 

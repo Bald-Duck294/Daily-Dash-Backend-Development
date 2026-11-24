@@ -3715,8 +3715,14 @@ export const getCleanerPenaltySummaryReport = async (req, res) => {
     // Sort by gross_amount descending (highest penalties first)
     reportData.sort((a, b) => b.gross_amount - a.gross_amount);
 
+    const isSingleCleaner = Boolean(
+      (cleaner_id && cleaner_id !== "undefined" && cleaner_id !== "all") ||
+      reportData.length === 1
+    );
+
     const reportMetadata = {
-      report_type: "Cleaner Penalty Summary Report",
+      report_type: isSingleCleaner ? "Single Cleaner Penalty Report" : "Cleaner Penalty Summary Report",
+      is_single_cleaner: isSingleCleaner,
       generated_on: new Date().toISOString(),
       organization: company.name,
       user_role_id: user?.role_id,
@@ -3732,6 +3738,15 @@ export const getCleanerPenaltySummaryReport = async (req, res) => {
       disputes_count: totalDisputesCount,
     };
 
+    if (isSingleCleaner && reportData.length > 0) {
+      reportMetadata.cleaner_id = reportData[0].cleaner_id;
+      reportMetadata.cleaner_name = reportData[0].cleaner_name;
+      reportMetadata.cleaner_phone = reportData[0].cleaner_phone;
+      reportMetadata.cleaner_email = reportData[0].cleaner_email;
+      reportMetadata.cleaner_avatar = reportData[0].cleaner_avatar;
+      reportMetadata.locations = reportData[0].locations;
+    }
+
     return res.status(200).json({
       status: "success",
       message: "Cleaner Penalty Summary report generated successfully",
@@ -3744,6 +3759,314 @@ export const getCleanerPenaltySummaryReport = async (req, res) => {
     return res.status(500).json({
       status: "error",
       message: "Failed to generate cleaner penalty summary report",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
+/**
+ * Washroom Penalty Summary Report
+ * Aggregates penalties grouped by Washroom Location
+ * If location_id is specified or single washroom, generates a Single Washroom Penalty Report
+ */
+export const getWashroomPenaltySummaryReport = async (req, res) => {
+  try {
+    const {
+      company_id,
+      start_date,
+      end_date,
+      cleaner_id,
+      location_id,
+    } = req.query;
+
+    if (!company_id) {
+      return res.status(400).json({
+        status: "error",
+        message: "company_id is required",
+      });
+    }
+
+    const companyIdBigInt = BigInt(company_id);
+
+    const company = await prisma.companies.findUnique({
+      where: { id: companyIdBigInt },
+      select: { id: true, name: true },
+    });
+
+    if (!company) {
+      return res.status(404).json({
+        status: "error",
+        message: "Company not found",
+      });
+    }
+
+    const user = req.user;
+    const isSupervisor = user?.role_id === 3 || user?.role_id === 7;
+    const isCleaner = user?.role_id === 5;
+
+    const whereClause = {
+      company_id: companyIdBigInt,
+    };
+
+    if (isSupervisor && user?.id) {
+      const authorizedLocationIds = await RBACFilterService.getAuthorizedLocationIds(
+        user.id,
+        company_id
+      );
+
+      if (!authorizedLocationIds || authorizedLocationIds.length === 0) {
+        return res.status(200).json({
+          status: "success",
+          data: [],
+          count: 0,
+          metadata: {
+            report_type: "Washroom Penalty Summary Report",
+            generated_on: new Date().toISOString(),
+            organization: company.name,
+            user_role_id: user?.role_id,
+            date_range: {
+              start: start_date || "Beginning",
+              end: end_date || "Now",
+            },
+            total_washrooms: 0,
+            gross_amount: 0,
+            approved_amount: 0,
+            waived_amount: 0,
+            pending_amount: 0,
+            disputes_count: 0,
+          },
+        });
+      }
+
+      if (location_id && location_id !== "undefined" && location_id !== "all") {
+        const targetLocId = BigInt(location_id);
+        const hasAccess = authorizedLocationIds.some(
+          (authId) => BigInt(authId) === targetLocId
+        );
+        if (!hasAccess) {
+          return res.status(403).json({
+            status: "error",
+            message: "Unauthorized access to this washroom location",
+          });
+        }
+        whereClause.location_id = targetLocId;
+      } else {
+        whereClause.location_id = { in: authorizedLocationIds };
+      }
+    } else if (isCleaner && user?.id) {
+      whereClause.cleaner_user_id = BigInt(user.id);
+      if (location_id && location_id !== "undefined" && location_id !== "all") {
+        whereClause.location_id = BigInt(location_id);
+      }
+    } else {
+      if (location_id && location_id !== "undefined" && location_id !== "all") {
+        whereClause.location_id = BigInt(location_id);
+      }
+    }
+
+    if (cleaner_id && cleaner_id !== "undefined" && cleaner_id !== "all") {
+      whereClause.cleaner_user_id = BigInt(cleaner_id);
+    }
+
+    if (start_date || end_date) {
+      const dateConditions = {};
+      if (start_date) {
+        const start = new Date(start_date);
+        start.setUTCHours(0, 0, 0, 0);
+        dateConditions.gte = start;
+      }
+      if (end_date) {
+        const end = new Date(end_date);
+        end.setUTCHours(23, 59, 59, 999);
+        dateConditions.lte = end;
+      }
+
+      whereClause.OR = [
+        { business_date: dateConditions },
+        { created_at: dateConditions },
+      ];
+    }
+
+    const penalties = await prisma.cleaner_penalties.findMany({
+      where: whereClause,
+      orderBy: { created_at: "desc" },
+      include: {
+        cleaner_user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            avatar_url: true,
+          },
+        },
+        location: {
+          select: {
+            id: true,
+            name: true,
+            address: true,
+            city: true,
+            code: true,
+            state: true,
+          },
+        },
+        rule: {
+          select: {
+            id: true,
+            rule_code: true,
+            name: true,
+            violation_category: true,
+          },
+        },
+        violation: {
+          select: {
+            id: true,
+            score: true,
+            threshold: true,
+          },
+        },
+      },
+    });
+
+    const isSingleWashroom = Boolean(
+      (location_id && location_id !== "undefined" && location_id !== "all") ||
+      (penalties.length > 0 && new Set(penalties.map((p) => String(p.location_id))).size === 1)
+    );
+
+    const washroomMap = new Map();
+    let totalGrossAmount = 0;
+    let totalApprovedAmount = 0;
+    let totalWaivedAmount = 0;
+    let totalPendingAmount = 0;
+    let totalDisputesCount = 0;
+
+    for (const p of penalties) {
+      const locId = p.location_id ? String(p.location_id) : "unknown";
+      const calcAmount = Number(p.calculated_amount || 0);
+      const approvedAmount = Number(p.approved_amount || 0);
+
+      totalGrossAmount += calcAmount;
+
+      const isWaived = p.status === "REJECTED" || p.status === "REVERSED";
+      const isApproved = p.status === "APPROVED";
+      const isPending =
+        p.status === "PENDING" ||
+        p.status === "DISPUTED" ||
+        p.status === "UNDER_REVIEW" ||
+        p.status === "PENDING_APPROVAL";
+      const isDisputed = Boolean(p.disputed_at) || p.status === "DISPUTED";
+
+      if (isWaived) totalWaivedAmount += calcAmount;
+      if (isApproved) totalApprovedAmount += approvedAmount;
+      if (isPending) totalPendingAmount += calcAmount;
+      if (isDisputed) totalDisputesCount += 1;
+
+      if (!washroomMap.has(locId)) {
+        washroomMap.set(locId, {
+          location_id: locId,
+          location_name: p.location?.name || `Washroom #${locId}`,
+          location_code: p.location?.code || "-",
+          location_address: p.location?.address || "-",
+          location_city: p.location?.city || "-",
+          cleaners_set: new Set(),
+          cleaners_list: [],
+          total_penalties: 0,
+          gross_amount: 0,
+          approved_amount: 0,
+          waived_amount: 0,
+          pending_amount: 0,
+          disputes_count: 0,
+          violations_list: [],
+        });
+      }
+
+      const wData = washroomMap.get(locId);
+      wData.total_penalties += 1;
+      wData.gross_amount += calcAmount;
+      if (isWaived) wData.waived_amount += calcAmount;
+      if (isApproved) wData.approved_amount += approvedAmount;
+      if (isPending) wData.pending_amount += calcAmount;
+      if (isDisputed) wData.disputes_count += 1;
+
+      if (p.cleaner_user?.name) {
+        if (!wData.cleaners_set.has(p.cleaner_user.name)) {
+          wData.cleaners_set.add(p.cleaner_user.name);
+          wData.cleaners_list.push({
+            id: String(p.cleaner_user.id),
+            name: p.cleaner_user.name,
+            phone: p.cleaner_user.phone || "-",
+          });
+        }
+      }
+
+      wData.violations_list.push({
+        penalty_id: String(p.id),
+        penalty_number: p.penalty_number,
+        date: p.business_date || p.created_at,
+        cleaner_name: p.cleaner_user?.name || "Unassigned",
+        cleaner_phone: p.cleaner_user?.phone || "-",
+        cleaner_id: p.cleaner_user_id ? String(p.cleaner_user_id) : null,
+        location_name: p.location?.name || "N/A",
+        rule_code: p.rule?.rule_code || "RULE",
+        rule_name: p.rule?.name || "SLA Breach",
+        score: p.violation?.score ? Number(p.violation.score) : null,
+        calculated_amount: calcAmount,
+        approved_amount: approvedAmount,
+        status: p.status,
+        dispute_reason: p.dispute_reason,
+        review_id: p.review_id ? String(p.review_id) : null,
+      });
+    }
+
+    const reportData = Array.from(washroomMap.values()).map((w) => ({
+      ...w,
+      cleaners: Array.from(w.cleaners_set),
+      gross_amount: Number(w.gross_amount.toFixed(2)),
+      approved_amount: Number(w.approved_amount.toFixed(2)),
+      waived_amount: Number(w.waived_amount.toFixed(2)),
+      pending_amount: Number(w.pending_amount.toFixed(2)),
+    }));
+
+    reportData.sort((a, b) => b.gross_amount - a.gross_amount);
+
+    const reportMetadata = {
+      report_type: isSingleWashroom ? "Single Washroom Penalty Report" : "Washroom Penalty Summary Report",
+      is_single_washroom: isSingleWashroom,
+      generated_on: new Date().toISOString(),
+      organization: company.name,
+      user_role_id: user?.role_id,
+      date_range: {
+        start: start_date || "Beginning",
+        end: end_date || "Now",
+      },
+      total_washrooms: reportData.length,
+      gross_amount: Number(totalGrossAmount.toFixed(2)),
+      approved_amount: Number(totalApprovedAmount.toFixed(2)),
+      waived_amount: Number(totalWaivedAmount.toFixed(2)),
+      pending_amount: Number(totalPendingAmount.toFixed(2)),
+      disputes_count: totalDisputesCount,
+    };
+
+    if (isSingleWashroom && reportData.length > 0) {
+      reportMetadata.location_id = reportData[0].location_id;
+      reportMetadata.location_name = reportData[0].location_name;
+      reportMetadata.location_address = reportData[0].location_address;
+      reportMetadata.location_code = reportData[0].location_code;
+      reportMetadata.cleaners = reportData[0].cleaners;
+    }
+
+    return res.status(200).json({
+      status: "success",
+      message: "Washroom Penalty Summary report generated successfully",
+      metadata: serializeBigInt(reportMetadata),
+      data: serializeBigInt(reportData),
+      count: reportData.length,
+    });
+  } catch (error) {
+    console.error("Error generating washroom penalty summary report:", error);
+    return res.status(500).json({
+      status: "error",
+      message: "Failed to generate washroom penalty summary report",
       error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }

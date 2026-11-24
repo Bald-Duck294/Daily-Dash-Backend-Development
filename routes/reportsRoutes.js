@@ -15,7 +15,8 @@ import {
     getWashroomReport,
     getCleanerReport,
     getWashroomDailyScoresReport,
-    getCleanerPenaltySummaryReport
+    getCleanerPenaltySummaryReport,
+    getWashroomPenaltySummaryReport
 } from "../controller/reportController.js";
 const reportRouter = express.Router();
 
@@ -31,6 +32,7 @@ reportRouter.get("/washroom-report", verifyToken, getWashroomReport);
 reportRouter.get("/cleaner-report", verifyToken, getCleanerReport);
 reportRouter.get("/washroom-daily-scores", verifyToken, getWashroomDailyScoresReport);
 reportRouter.get("/cleaner-penalty-summary", verifyToken, getCleanerPenaltySummaryReport);
+reportRouter.get("/washroom-penalty-summary", verifyToken, getWashroomPenaltySummaryReport);
 
 
 
