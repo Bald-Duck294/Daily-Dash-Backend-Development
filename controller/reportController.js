@@ -4204,9 +4204,24 @@ export const getAttendanceReport = async (req, res) => {
       reviewGroups[key].push(rev);
     });
 
-    // 6. Build Daily Attendance Records & Cleaner Summaries
+    // Format date columns: "Sun-01", "Mon-02", etc.
+    const dateColumns = dateList.map((dStr) => {
+      const d = new Date(dStr);
+      const dayName = d.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
+      const dayNum = String(d.getUTCDate()).padStart(2, "0");
+      return {
+        date: dStr,
+        label: `${dayName}-${dayNum}`,
+        dayName,
+        dayNum,
+        isSunday: d.getUTCDay() === 0,
+      };
+    });
+
+    // 6. Build Daily Attendance Records, Cleaner Summaries, and Matrix Rows
     let allRecords = [];
     const cleanerSummaries = [];
+    const matrixRows = [];
 
     cleaners.forEach((cleaner) => {
       const cId = cleaner.id.toString();
@@ -4221,18 +4236,33 @@ export const getAttendanceReport = async (req, res) => {
       let cleanerPresentDays = 0;
       let cleanerAbsentDays = 0;
       let cleanerTotalLogs = 0;
+      const attendanceMatrixMap = {};
 
       dateList.forEach((dStr) => {
         const key = `${cId}_${dStr}`;
         const dayReviews = reviewGroups[key] || [];
         const isPresent = dayReviews.length > 0;
+        const dObj = new Date(dStr);
+        const isSunday = dObj.getUTCDay() === 0;
 
+        let code = "A";
         if (isPresent) {
+          code = "P";
           cleanerPresentDays++;
           cleanerTotalLogs += dayReviews.length;
+        } else if (isSunday) {
+          code = "WO";
+          cleanerAbsentDays++;
         } else {
+          code = "A";
           cleanerAbsentDays++;
         }
+
+        attendanceMatrixMap[dStr] = {
+          code, // "P" | "A" | "WO"
+          logs_count: dayReviews.length,
+          status: isPresent ? "Present" : isSunday ? "Week Off" : "Absent",
+        };
 
         const firstLog = isPresent ? dayReviews[0].created_at : null;
         const lastLog = isPresent
@@ -4253,7 +4283,8 @@ export const getAttendanceReport = async (req, res) => {
           assigned_locations: assignedLocs.length > 0 ? assignedLocs : ["Unassigned"],
           active_locations: activeLocs,
           cleaning_logs: dayReviews.length,
-          status: isPresent ? "Present" : "Absent",
+          status: isPresent ? "Present" : isSunday ? "Week Off" : "Absent",
+          code,
         });
       });
 
@@ -4277,6 +4308,18 @@ export const getAttendanceReport = async (req, res) => {
           cleanerPresentDays > 0
             ? (cleanerTotalLogs / cleanerPresentDays).toFixed(1)
             : "0.0",
+      });
+
+      matrixRows.push({
+        sr_no: matrixRows.length + 1,
+        cleaner_id: cId,
+        employee_name: cleaner.name || "Unknown",
+        cleaner_phone: cleaner.phone || "-",
+        client_range: company?.name || "N/A",
+        site_beat: assignedLocs.length > 0 ? assignedLocs.join(", ") : "Unassigned",
+        days_worked: cleanerPresentDays,
+        total_days: totalDays,
+        attendance_map: attendanceMatrixMap,
       });
     });
 
@@ -4345,6 +4388,8 @@ export const getAttendanceReport = async (req, res) => {
       message: "Attendance report generated successfully",
       metadata: serializeBigInt(reportMetadata),
       cleaner_summaries: serializeBigInt(cleanerSummaries),
+      date_columns: serializeBigInt(dateColumns),
+      matrix: serializeBigInt(matrixRows),
       data: serializeBigInt(allRecords),
       count: allRecords.length,
     });
