@@ -4138,6 +4138,15 @@ export const getAttendanceReport = async (req, res) => {
           deleted_at: null,
         },
       };
+    } else if (type_id && type_id !== "all" && type_id !== "undefined") {
+      cleanerWhere.cleaner_assignments_as_cleaner = {
+        some: {
+          locations: {
+            type_id: BigInt(type_id),
+          },
+          deleted_at: null,
+        },
+      };
     }
 
     const cleaners = await prisma.users.findMany({
@@ -4204,17 +4213,18 @@ export const getAttendanceReport = async (req, res) => {
       reviewGroups[key].push(rev);
     });
 
-    // Format date columns: "Sun-01", "Mon-02", etc.
+    // Format date columns: label e.g. "Sun-01", dayName, dayNum
     const dateColumns = dateList.map((dStr) => {
       const d = new Date(dStr);
       const dayName = d.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
       const dayNum = String(d.getUTCDate()).padStart(2, "0");
+      const monthShort = d.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" });
       return {
         date: dStr,
         label: `${dayName}-${dayNum}`,
         dayName,
         dayNum,
-        isSunday: d.getUTCDay() === 0,
+        monthShort,
       };
     });
 
@@ -4242,26 +4252,21 @@ export const getAttendanceReport = async (req, res) => {
         const key = `${cId}_${dStr}`;
         const dayReviews = reviewGroups[key] || [];
         const isPresent = dayReviews.length > 0;
-        const dObj = new Date(dStr);
-        const isSunday = dObj.getUTCDay() === 0;
 
         let code = "A";
         if (isPresent) {
           code = "P";
           cleanerPresentDays++;
           cleanerTotalLogs += dayReviews.length;
-        } else if (isSunday) {
-          code = "WO";
-          cleanerAbsentDays++;
         } else {
           code = "A";
           cleanerAbsentDays++;
         }
 
         attendanceMatrixMap[dStr] = {
-          code, // "P" | "A" | "WO"
+          code, // "P" | "A"
           logs_count: dayReviews.length,
-          status: isPresent ? "Present" : isSunday ? "Week Off" : "Absent",
+          status: isPresent ? "Present" : "Absent",
         };
 
         const firstLog = isPresent ? dayReviews[0].created_at : null;
@@ -4283,7 +4288,7 @@ export const getAttendanceReport = async (req, res) => {
           assigned_locations: assignedLocs.length > 0 ? assignedLocs : ["Unassigned"],
           active_locations: activeLocs,
           cleaning_logs: dayReviews.length,
-          status: isPresent ? "Present" : isSunday ? "Week Off" : "Absent",
+          status: isPresent ? "Present" : "Absent",
           code,
         });
       });
@@ -4313,22 +4318,35 @@ export const getAttendanceReport = async (req, res) => {
       matrixRows.push({
         sr_no: matrixRows.length + 1,
         cleaner_id: cId,
-        employee_name: cleaner.name || "Unknown",
+        cleaner_name: cleaner.name || "Unknown",
         cleaner_phone: cleaner.phone || "-",
+        company_name: company?.name || "N/A",
+        assigned_locations: assignedLocs.length > 0 ? assignedLocs.join(", ") : "Unassigned",
+        days_present: cleanerPresentDays,
+        days_absent: cleanerAbsentDays,
+        total_days: totalDays,
+        attendance_rate: `${attRate}%`,
+        attendance_map: attendanceMatrixMap,
+        // Backward-compatible aliases:
+        employee_name: cleaner.name || "Unknown",
         client_range: company?.name || "N/A",
         site_beat: assignedLocs.length > 0 ? assignedLocs.join(", ") : "Unassigned",
         days_worked: cleanerPresentDays,
-        total_days: totalDays,
-        attendance_map: attendanceMatrixMap,
       });
     });
 
-    // Filter allRecords by status if specified
+    // Filter matrix & records by status if specified
+    let filteredMatrix = matrixRows;
     if (status && status !== "all" && status !== "All") {
       const targetStatus = status.toLowerCase();
       allRecords = allRecords.filter(
         (r) => r.status.toLowerCase() === targetStatus
       );
+      if (targetStatus === "present") {
+        filteredMatrix = matrixRows.filter((r) => r.days_present > 0);
+      } else if (targetStatus === "absent") {
+        filteredMatrix = matrixRows.filter((r) => r.days_present === 0);
+      }
     }
 
     // Sort by date desc, then cleaner name asc
@@ -4389,7 +4407,7 @@ export const getAttendanceReport = async (req, res) => {
       metadata: serializeBigInt(reportMetadata),
       cleaner_summaries: serializeBigInt(cleanerSummaries),
       date_columns: serializeBigInt(dateColumns),
-      matrix: serializeBigInt(matrixRows),
+      matrix: serializeBigInt(filteredMatrix),
       data: serializeBigInt(allRecords),
       count: allRecords.length,
     });
