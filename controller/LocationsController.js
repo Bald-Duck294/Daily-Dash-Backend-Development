@@ -1300,17 +1300,40 @@ export const getToiletById = async (req, res) => {
       return res.status(404).json({ message: "Toilet not found" });
     }
 
-    // console.log(location, 'locations 56');
-    const reviews = await prisma.user_review_qr.findMany({
-      where: { toilet_id: Number(locId) },
-    });
+    // Fetch latest 10 user reviews matching either location_id (QR/Locator) or legacy toilet_id
+    const reviewWhere = {
+      OR: [
+        { location_id: BigInt(locId) },
+        { toilet_id: BigInt(locId) },
+      ],
+    };
 
-    console.log(reviews, "reviews");
+    const [reviews, reviewAgg] = await Promise.all([
+      prisma.user_review_qr.findMany({
+        where: reviewWhere,
+        orderBy: { created_at: "desc" },
+        take: 10,
+      }),
+      prisma.user_review_qr.aggregate({
+        where: reviewWhere,
+        _count: { id: true },
+        _avg: { rating: true },
+      }),
+    ]);
+
     const intReviews = reviews.map((item) => ({
       ...item,
-      toilet_id: item.toilet_id?.toString() || null,
       id: item.id?.toString() || null,
+      toilet_id: item.toilet_id?.toString() || null,
+      location_id: item.location_id?.toString() || null,
+      company_id: item.company_id?.toString() || null,
     }));
+
+    const userReviewCount = reviewAgg?._count?.id || 0;
+    const userReviewAverage =
+      reviewAgg?._avg?.rating !== null && reviewAgg?._avg?.rating !== undefined
+        ? parseFloat(Number(reviewAgg._avg.rating).toFixed(1))
+        : null;
 
     // console.log(intReviews, "int review")
 
@@ -1427,6 +1450,8 @@ export const getToiletById = async (req, res) => {
       averageRating,
       ratingCount,
       ReviewData: intReviews,
+      userReviewCount,
+      userReviewAverage,
       ratingSource: INCLUDE_USER_REVIEWS_IN_RATING
         ? "hygiene_and_user_reviews"
         : "hygiene_only",

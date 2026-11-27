@@ -1,5 +1,6 @@
 // backend/controllers/attendance.controller.js
 import { PrismaClient } from '@prisma/client';
+import RBACFilterService from '../utils/rbacFilterService.js';
 const prisma = new PrismaClient();
 
 // export async function getCleanerAttendance(req, res) {
@@ -23,12 +24,39 @@ export async function getCleanerAttendance(req, res) {
     if (company_id) {
       whereClause.company_id = BigInt(company_id);
     }
-    
+
+    // Apply RBAC scoping so Supervisors / Zonal Admins only see their assigned cleaners & locations
+    if (req.user) {
+      const [userFilter, locationFilter] = await Promise.all([
+        RBACFilterService.getUserFilter(req.user),
+        RBACFilterService.getLocationFilter(req.user, "cleaner_activity"),
+      ]);
+
+      if (userFilter?.id) {
+        whereClause.cleaner_user_id = userFilter.id;
+      }
+
+      if (locationFilter?.location_id) {
+        whereClause.location_id = locationFilter.location_id;
+      } else if (locationFilter?.id) {
+        whereClause.location_id = locationFilter.id;
+      }
+    }
+
     // Note: We keep the filter for the review, but we will handle the "assigned cleaner"
     // visibility in the frontend using the 'allCleaners' prop
     if (location_id && location_id !== "all") {
       try {
-        whereClause.location_id = BigInt(location_id);
+        const requestedLocId = BigInt(location_id);
+        if (whereClause.location_id?.in) {
+          const allowed = whereClause.location_id.in.some(
+            (id) => BigInt(id) === requestedLocId,
+          );
+          if (!allowed) {
+            return res.json({ data: [], pagination: { total_items: 0, total_pages: 0 } });
+          }
+        }
+        whereClause.location_id = requestedLocId;
       } catch (error) {
         return res.json({ data: [], pagination: { total_items: 0, total_pages: 0 } });
       }
@@ -36,7 +64,23 @@ export async function getCleanerAttendance(req, res) {
 
     if (cleaner_user_id && cleaner_user_id !== "all") {
       try {
-        whereClause.cleaner_user_id = BigInt(cleaner_user_id);
+        const requestedCleanerId = BigInt(cleaner_user_id);
+        if (whereClause.cleaner_user_id?.in) {
+          const allowed = whereClause.cleaner_user_id.in.some(
+            (id) => BigInt(id) === requestedCleanerId,
+          );
+          if (!allowed) {
+            return res.json({
+              data: [],
+              pagination: {
+                total_items: 0, total_pages: 0,
+                current_page: parseInt(page), items_per_page: parseInt(limit),
+                has_next_page: false, has_prev_page: false
+              }
+            });
+          }
+        }
+        whereClause.cleaner_user_id = requestedCleanerId;
       } catch (error) {
         return res.json({ 
           data: [], 

@@ -18,17 +18,31 @@ export const getAllLocationTypes = async (req, res) => {
   try {
     const types = await prisma.location_types.findMany({
       where: whereClause,
+      include: {
+        _count: {
+          select: {
+            locations: {
+              where: { deleted_at: null },
+            },
+          },
+        },
+      },
       orderBy: { id: "asc" },
     });
 
     // console.log(types, "types");
-    const updatedTypes = types.map((item) => ({
-      ...item,
-      id: item.id.toString(),
-      parent_id: item.parent_id?.toString() || null,
-      company_id: item.company_id.toString(),
-      //   company_id: BigInt(),
-    }));
+    const updatedTypes = types.map((item) => {
+      const locCount = item._count?.locations ?? 0;
+      return {
+        ...item,
+        id: item.id.toString(),
+        parent_id: item.parent_id?.toString() || null,
+        company_id: item.company_id ? item.company_id.toString() : null,
+        nodesCount: locCount,
+        locations_count: locCount,
+        locationsCount: locCount,
+      };
+    });
 
     res.json(updatedTypes);
   } catch (err) {
